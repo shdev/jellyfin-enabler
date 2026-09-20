@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -637,5 +638,135 @@ func TestListeOrdnetZugriffstextDemRichtigenBenutzerZu(t *testing.T) {
 	}
 	if strings.Contains(kind, "Alle Bibliotheken") {
 		t.Error("der Zugriffstext von papa ist bei kind1 gelandet")
+	}
+}
+
+func speichern(t *testing.T, h http.Handler, c *http.Cookie, id, rumpf string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/users/"+id+"/access", strings.NewReader(rumpf))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(c)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSpeichernSchreibtUndAntwortetMitBestaetigtemStand(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2",
+		`{"disabled": true, "allFolders": false, "folders": ["lib-a"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Code = %d, Rumpf %s", rec.Code, rec.Body.String())
+	}
+	if jf.writtenID != "u-2" {
+		t.Errorf("geschrieben für %q, erwartet u-2", jf.writtenID)
+	}
+	if !jf.written.Disabled || jf.written.AllFolders || len(jf.written.Folders) != 1 {
+		t.Errorf("geschriebener Zugriff = %+v", jf.written)
+	}
+	if jf.written.Folders[0] != "lib-a" {
+		t.Errorf("geschriebene Liste = %v, erwartet [lib-a]", jf.written.Folders)
+	}
+	var antwort struct {
+		Disabled   bool     `json:"disabled"`
+		AllFolders bool     `json:"allFolders"`
+		Folders    []string `json:"folders"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &antwort); err != nil {
+		t.Fatalf("Antwort nicht lesbar: %v", err)
+	}
+	if !antwort.Disabled || len(antwort.Folders) != 1 || antwort.Folders[0] != "lib-a" {
+		t.Errorf("Antwort = %+v, erwartet den bestätigten Stand", antwort)
+	}
+	if antwort.AllFolders {
+		t.Errorf("antwort.AllFolders = %v, erwartet false", antwort.AllFolders)
+	}
+}
+
+func TestSpeichernAntwortetMitLeererListeStattNull(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2",
+		`{"disabled": false, "allFolders": true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Code = %d, Rumpf %s", rec.Code, rec.Body.String())
+	}
+	rumpf := rec.Body.String()
+	if !strings.Contains(rumpf, `"folders":[]`) {
+		t.Errorf("Antwort enthält nicht \"folders\":[]: %s", rumpf)
+	}
+	if strings.Contains(rumpf, `"folders":null`) {
+		t.Errorf("Antwort enthält \"folders\":null, das darf nicht sein: %s", rumpf)
+	}
+}
+
+func TestSpeichernLehntUnbekannteBibliothekAb(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2",
+		`{"disabled": false, "allFolders": false, "folders": ["lib-a", "erfunden"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Code = %d, erwartet 400", rec.Code)
+	}
+	if jf.writtenID != "" {
+		t.Error("bei ungültiger Eingabe darf nichts geschrieben werden")
+	}
+}
+
+func TestSpeichernKaputtesJSON(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2", `{kein json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Code = %d, erwartet 400", rec.Code)
+	}
+}
+
+func TestSpeichernReichtVerbotDurch(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.updateErr = &jellyfin.Error{
+		Status:  http.StatusForbidden,
+		Message: "Administratoren können nicht deaktiviert werden.",
+		Body:    "Administrators cannot be disabled.",
+	}
+
+	rec := speichern(t, h, angemeldet(t, store), "u-1", `{"disabled": true, "allFolders": true, "folders": []}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Code = %d, erwartet 403", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Administratoren können nicht deaktiviert werden.") {
+		t.Errorf("Rumpf = %s", rec.Body.String())
+	}
+}
+
+func TestSpeichernBeiAbgelaufenemTokenGibt401(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.updateErr = &jellyfin.Error{Status: http.StatusUnauthorized, Message: "Die Anmeldung ist abgelaufen."}
+
+	c := angemeldet(t, store)
+	rec := speichern(t, h, c, "u-2", `{"disabled": false, "allFolders": false, "folders": []}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Code = %d, erwartet 401", rec.Code)
+	}
+	if _, ok := store.Get(c.Value); ok {
+		t.Error("die tote Sitzung muss verworfen werden")
+	}
+}
+
+func TestSpeichernBeiJellyfinAusfallGibt502(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.updateErr = errors.New("Verbindung abgelehnt")
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2", `{"disabled": false, "allFolders": false, "folders": []}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("Code = %d, erwartet 502", rec.Code)
 	}
 }

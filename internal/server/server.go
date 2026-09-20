@@ -344,8 +344,76 @@ func (s *Server) handleUserPage(w http.ResponseWriter, r *http.Request, sess ses
 	}
 }
 
-// handleUpdateAccess ist der Platzhalter für das Speichern der Zugriffsrechte
-// (Task 11).
-func (s *Server) handleUpdateAccess(w http.ResponseWriter, _ *http.Request, _ session.Session) {
-	writeError(w, http.StatusNotImplemented, "kommt in Task 11")
+type accessRequest struct {
+	Disabled   bool     `json:"disabled"`
+	AllFolders bool     `json:"allFolders"`
+	Folders    []string `json:"folders"`
+}
+
+type accessResponse struct {
+	Disabled   bool     `json:"disabled"`
+	AllFolders bool     `json:"allFolders"`
+	Folders    []string `json:"folders"`
+}
+
+func (s *Server) handleUpdateAccess(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	var req accessRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Die Anfrage war nicht lesbar.")
+		return
+	}
+	// Nur bekannte Bibliotheken zulassen — sonst landet Unsinn in der Policy.
+	libs, err := s.jf.Libraries(r.Context(), sess.Token)
+	if err != nil {
+		s.apiFehler(w, r, err)
+		return
+	}
+	bekannt := make(map[string]bool, len(libs))
+	for _, l := range libs {
+		bekannt[l.ID] = true
+	}
+	for _, f := range req.Folders {
+		if !bekannt[f] {
+			writeError(w, http.StatusBadRequest, "Unbekannte Bibliothek: "+f)
+			return
+		}
+	}
+
+	neu, err := s.jf.UpdateAccess(r.Context(), sess.Token, r.PathValue("id"), jellyfin.Access{
+		Disabled:   req.Disabled,
+		AllFolders: req.AllFolders,
+		Folders:    req.Folders,
+	})
+	if err != nil {
+		s.apiFehler(w, r, err)
+		return
+	}
+	folders := neu.Folders
+	if folders == nil {
+		folders = []string{}
+	}
+	writeJSON(w, http.StatusOK, accessResponse{
+		Disabled:   neu.Disabled,
+		AllFolders: neu.AllFolders,
+		Folders:    folders,
+	})
+}
+
+// apiFehler übersetzt einen Fehler in eine JSON-Antwort. Die deutschen
+// Meldungen kommen aus dem Client, damit die Oberfläche sie unverändert
+// anzeigen kann (Spec §Fehlerbehandlung).
+func (s *Server) apiFehler(w http.ResponseWriter, r *http.Request, err error) {
+	var jfErr *jellyfin.Error
+	if errors.As(err, &jfErr) {
+		if jfErr.Unauthorized() {
+			if _, id, ok := s.aktuelleSitzung(r); ok {
+				s.sessions.Delete(id)
+			}
+		}
+		log.Printf("Jellyfin hat abgelehnt: %v", jfErr)
+		writeError(w, jfErr.Status, jfErr.Message)
+		return
+	}
+	log.Printf("Jellyfin nicht erreichbar: %v", err)
+	writeError(w, http.StatusBadGateway, "Jellyfin ist gerade nicht erreichbar.")
 }
