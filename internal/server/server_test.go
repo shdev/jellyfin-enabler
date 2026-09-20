@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -61,6 +62,15 @@ func aufbau(t *testing.T) (http.Handler, *fakeJF, *session.Store) {
 	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa"}}
 	store := session.NewStore(time.Hour)
 	return server.New(jf, store, "false"), jf, store
+}
+
+// aufbauMit erlaubt es, die Secure-Entscheidung zu prüfen; aufbau bleibt
+// die knappe Variante für alle übrigen Tests.
+func aufbauMit(t *testing.T, cookieSecure string) (http.Handler, *fakeJF, *session.Store) {
+	t.Helper()
+	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa"}}
+	store := session.NewStore(time.Hour)
+	return server.New(jf, store, cookieSecure), jf, store
 }
 
 // angemeldet legt eine Sitzung an und liefert das passende Cookie.
@@ -209,4 +219,71 @@ func TestNoStoreAufAllenAntworten(t *testing.T) {
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, erwartet no-store", got)
 	}
+}
+
+// TestSecureFlagAmSitzungscookie deckt alle drei Zweige von (*Server).secure
+// ab. Eine vertauschte Bedingung dort würde das Sitzungscookie im Klartext
+// über eine TLS-terminierende Proxy-Strecke schicken — genau das soll das
+// Secure-Flag verhindern.
+func TestSecureFlagAmSitzungscookie(t *testing.T) {
+	cases := []struct {
+		name         string
+		cookieSecure string
+		mitTLS       bool
+		erwartet     bool
+	}{
+		{"explizit true", "true", false, true},
+		{"explizit false", "false", true, false},
+		{"auto ohne TLS", "auto", false, false},
+		{"auto mit TLS", "auto", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := aufbauMit(t, tc.cookieSecure)
+			form := url.Values{"username": {"papa"}, "password": {"geheim"}}
+			req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if tc.mitTLS {
+				req.TLS = &tls.ConnectionState{}
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == "jfe_session" {
+					if c.Secure != tc.erwartet {
+						t.Errorf("Secure = %v, erwartet %v", c.Secure, tc.erwartet)
+					}
+					return
+				}
+			}
+			t.Fatal("Sitzungscookie fehlt")
+		})
+	}
+}
+
+// TestLoeschCookieHatDieselbenAttribute stellt sicher, dass das Cookie, das
+// die Abmeldung löscht, dieselben Attribute trägt wie das gesetzte —
+// unterscheiden sie sich, löschen manche Browser das Cookie nicht.
+func TestLoeschCookieHatDieselbenAttribute(t *testing.T) {
+	h, _, store := aufbauMit(t, "true")
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(angemeldet(t, store))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	for _, c := range rec.Result().Cookies() {
+		if c.Name != "jfe_session" {
+			continue
+		}
+		if c.MaxAge >= 0 {
+			t.Errorf("MaxAge = %d, erwartet negativ zum Löschen", c.MaxAge)
+		}
+		if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || !c.Secure || c.Path != "/" {
+			t.Errorf("Lösch-Cookie weicht ab: HttpOnly=%v SameSite=%v Secure=%v Path=%q",
+				c.HttpOnly, c.SameSite, c.Secure, c.Path)
+		}
+		return
+	}
+	t.Fatal("Lösch-Cookie fehlt")
 }
