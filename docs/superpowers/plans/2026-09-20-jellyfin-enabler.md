@@ -2659,6 +2659,11 @@ type usersData struct {
 	Users []userRow
 }
 
+// ACHTUNG (Review-Nachtrag, umgesetzt in e256b82): Diese Fassung vergleicht
+// nur Zählwerte. Steht in Access.Folders die ID einer gelöschten Bibliothek,
+// meldet sie fälschlich "Alle N Bibliotheken". Die gebaute Fassung nimmt
+// deshalb libs []jellyfin.Library entgegen und zählt nur Treffer gegen die
+// vorhandenen Bibliotheken; handleIndex ruft zugriffText(u, libs) auf.
 // zugriffText beschreibt die Bibliotheksfreigabe in einem Satz. "Alle
 // Bibliotheken" und "alle angehakt" sind bewusst unterschiedliche Aussagen:
 // nur Ersteres schließt künftig neue Bibliotheken ein
