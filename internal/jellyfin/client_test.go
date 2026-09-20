@@ -194,3 +194,93 @@ func TestLogoutSendetToken(t *testing.T) {
 		t.Errorf("Authorization = %q, erwartet Token", f.call(0).Auth)
 	}
 }
+
+const benutzerListe = `[
+  {"Id": "u-1", "Name": "papa", "Policy": {"IsAdministrator": true, "IsDisabled": false, "EnableAllFolders": true, "EnabledFolders": []}},
+  {"Id": "u-2", "Name": "kind1", "Policy": {"IsAdministrator": false, "IsDisabled": true, "EnableAllFolders": false, "EnabledFolders": ["lib-a", "lib-b"]}}
+]`
+
+func TestUsersLiefertZugriffsdaten(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users", http.StatusOK, benutzerListe)
+
+	users, err := f.client().Users(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("%d Benutzer, erwartet 2", len(users))
+	}
+	// Alphabetisch sortiert, damit die Liste in der Oberfläche stabil ist.
+	if users[0].Name != "kind1" || users[1].Name != "papa" {
+		t.Errorf("Reihenfolge = %s, %s — erwartet kind1, papa", users[0].Name, users[1].Name)
+	}
+	kind := users[0]
+	if !kind.Access.Disabled {
+		t.Error("kind1 muss als deaktiviert gelesen werden")
+	}
+	if kind.Admin {
+		t.Error("kind1 ist kein Administrator")
+	}
+	if len(kind.Access.Folders) != 2 || kind.Access.Folders[0] != "lib-a" {
+		t.Errorf("Folders = %v, erwartet [lib-a lib-b]", kind.Access.Folders)
+	}
+	if !users[1].Admin || !users[1].Access.AllFolders {
+		t.Errorf("papa = %+v, erwartet Administrator mit allen Bibliotheken", users[1])
+	}
+}
+
+func TestUserLiefertEinzelnenBenutzer(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"kind1","Policy":{"IsDisabled":false,"EnableAllFolders":false,"EnabledFolders":["lib-a"]}}`)
+
+	u, err := f.client().User(context.Background(), "tok", "u-2")
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if u.ID != "u-2" || u.Name != "kind1" || len(u.Access.Folders) != 1 {
+		t.Errorf("Benutzer = %+v", u)
+	}
+}
+
+func TestUserOhnePolicyIstFehler(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-3", http.StatusOK, `{"Id":"u-3","Name":"kaputt"}`)
+
+	// Eine fehlende Policy wird nicht stillschweigend erfunden — sonst
+	// schriebe der Dienst später eine leere Policy zurück.
+	if _, err := f.client().User(context.Background(), "tok", "u-3"); err == nil {
+		t.Fatal("Fehler erwartet, wenn die Policy fehlt")
+	}
+}
+
+func TestLibrariesLiefertItemIds(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Library/VirtualFolders", http.StatusOK, `[
+	  {"Name": "Serien", "ItemId": "lib-b", "CollectionType": "tvshows"},
+	  {"Name": "Filme", "ItemId": "lib-a", "CollectionType": "movies"}
+	]`)
+
+	libs, err := f.client().Libraries(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if len(libs) != 2 {
+		t.Fatalf("%d Bibliotheken, erwartet 2", len(libs))
+	}
+	if libs[0].Name != "Filme" || libs[0].ID != "lib-a" {
+		t.Errorf("erste Bibliothek = %+v, erwartet Filme/lib-a (alphabetisch)", libs[0])
+	}
+}
+
+func TestLesenSendetToken(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users", http.StatusOK, `[]`)
+
+	if _, err := f.client().Users(context.Background(), "tok-xyz"); err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if !strings.Contains(f.call(0).Auth, `Token="tok-xyz"`) {
+		t.Errorf("Authorization = %q, erwartet Token", f.call(0).Auth)
+	}
+}

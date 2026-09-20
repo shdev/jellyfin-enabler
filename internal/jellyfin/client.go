@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -122,4 +124,98 @@ func (c *Client) Authenticate(ctx context.Context, username, password string) (S
 
 func (c *Client) Logout(ctx context.Context, token string) error {
 	return c.do(ctx, http.MethodPost, "/Sessions/Logout", token, "", nil, nil)
+}
+
+// rawUser hält die Policy bewusst als Rohdaten. POST /Users/{id}/Policy
+// ersetzt die Policy vollständig — würde hier ein Struct mit nur den
+// benötigten Feldern stehen, gingen beim Zurückschreiben alle übrigen
+// verloren (Spec §Policy-Passthrough).
+type rawUser struct {
+	ID     string                     `json:"Id"`
+	Name   string                     `json:"Name"`
+	Policy map[string]json.RawMessage `json:"Policy"`
+}
+
+// view dekodiert aus der Rohpolicy die Felder, die die Oberfläche anzeigt —
+// ausschließlich lesend.
+func (r rawUser) view() (User, error) {
+	if r.Policy == nil {
+		return User{}, fmt.Errorf("jellyfin: Benutzer %q (%s) hat keine Policy", r.Name, r.ID)
+	}
+	var p struct {
+		IsAdministrator  bool     `json:"IsAdministrator"`
+		IsDisabled       bool     `json:"IsDisabled"`
+		EnableAllFolders bool     `json:"EnableAllFolders"`
+		EnabledFolders   []string `json:"EnabledFolders"`
+	}
+	b, err := json.Marshal(r.Policy)
+	if err != nil {
+		return User{}, err
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return User{}, err
+	}
+	return User{
+		ID:    r.ID,
+		Name:  r.Name,
+		Admin: p.IsAdministrator,
+		Access: Access{
+			Disabled:   p.IsDisabled,
+			AllFolders: p.EnableAllFolders,
+			Folders:    p.EnabledFolders,
+		},
+	}, nil
+}
+
+func (c *Client) Users(ctx context.Context, token string) ([]User, error) {
+	var raw []rawUser
+	if err := c.do(ctx, http.MethodGet, "/Users", token, "", nil, &raw); err != nil {
+		return nil, err
+	}
+	users := make([]User, 0, len(raw))
+	for _, r := range raw {
+		u, err := r.view()
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return strings.ToLower(users[i].Name) < strings.ToLower(users[j].Name)
+	})
+	return users, nil
+}
+
+func (c *Client) User(ctx context.Context, token, userID string) (User, error) {
+	r, err := c.rawUser(ctx, token, userID)
+	if err != nil {
+		return User{}, err
+	}
+	return r.view()
+}
+
+func (c *Client) rawUser(ctx context.Context, token, userID string) (rawUser, error) {
+	var r rawUser
+	if err := c.do(ctx, http.MethodGet, "/Users/"+url.PathEscape(userID), token, "", nil, &r); err != nil {
+		return rawUser{}, err
+	}
+	return r, nil
+}
+
+func (c *Client) Libraries(ctx context.Context, token string) ([]Library, error) {
+	var raw []struct {
+		Name   string `json:"Name"`
+		ItemID string `json:"ItemId"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/Library/VirtualFolders", token, "", nil, &raw); err != nil {
+		return nil, err
+	}
+	libs := make([]Library, 0, len(raw))
+	for _, r := range raw {
+		libs = append(libs, Library{ID: r.ItemID, Name: r.Name})
+	}
+	sort.Slice(libs, func(i, j int) bool {
+		return strings.ToLower(libs[i].Name) < strings.ToLower(libs[j].Name)
+	})
+	return libs, nil
 }
