@@ -1,0 +1,24 @@
+{{define "users"}}{{template "head" .}}
+    <header class="mb-6 flex items-center justify-between gap-3">
+      <h1 class="text-[17px] font-semibold tracking-tight">Jellyfin <span class="text-accent">Zugriff</span></h1>
+      <form method="post" action="/logout">
+        <button class="btn btn-ghost btn-sm" type="submit">Abmelden</button>
+      </form>
+    </header>
+    <h2 class="section-title mx-0.5 mb-2.5">Benutzer</h2>
+    <div class="grid gap-2">
+      {{range .Users}}
+      <a class="card flex items-center justify-between gap-3 no-underline" href="/users/{{.ID}}">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="truncate text-[14.5px] font-semibold text-text">{{.Name}}</span>
+            {{if .Admin}}<span class="pill pill-wait">Administrator</span>{{end}}
+          </div>
+          <div class="mt-0.5 text-[12.5px] text-muted">{{.Access}}</div>
+        </div>
+        {{if .Disabled}}<span class="pill pill-err"><span class="pill-dot"></span>Aus</span>
+        {{else}}<span class="pill pill-ok"><span class="pill-dot"></span>Aktiv</span>{{end}}
+      </a>
+      {{end}}
+    </div>
+{{template "foot" .}}{{end}}

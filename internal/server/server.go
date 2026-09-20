@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -210,9 +211,77 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-// handleIndex ist der Platzhalter für die Benutzerliste (Task 9).
-func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request, _ session.Session) {
-	http.Error(w, "kommt in Task 9", http.StatusNotImplemented)
+type userRow struct {
+	ID       string
+	Name     string
+	Admin    bool
+	Disabled bool
+	Access   string
+}
+
+type usersData struct {
+	Title string
+	Users []userRow
+}
+
+// zugriffText beschreibt die Bibliotheksfreigabe in einem Satz. "Alle
+// Bibliotheken" und "alle angehakt" sind bewusst unterschiedliche Aussagen:
+// nur Ersteres schließt künftig neue Bibliotheken ein
+// (Spec §EnableAllFolders-Semantik).
+func zugriffText(u jellyfin.User, gesamt int) string {
+	if u.Access.AllFolders {
+		return "Alle Bibliotheken"
+	}
+	n := len(u.Access.Folders)
+	switch {
+	case n == 0:
+		return "Keine Bibliothek"
+	case n >= gesamt && gesamt > 0:
+		return fmt.Sprintf("Alle %d Bibliotheken (ohne künftige)", gesamt)
+	default:
+		return fmt.Sprintf("%d von %d Bibliotheken", n, gesamt)
+	}
+}
+
+// seitenFehler behandelt einen Fehler auf einer Seitenroute: ein abgelaufenes
+// Token führt zurück zum Anmeldeformular, alles andere ist ein Ausfall der
+// Gegenstelle.
+func (s *Server) seitenFehler(w http.ResponseWriter, r *http.Request, err error) {
+	if jellyfin.IsUnauthorized(err) {
+		if _, id, ok := s.aktuelleSitzung(r); ok {
+			s.sessions.Delete(id)
+		}
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	log.Printf("Jellyfin nicht erreichbar: %v", err)
+	http.Error(w, "Jellyfin ist gerade nicht erreichbar.", http.StatusBadGateway)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	users, err := s.jf.Users(r.Context(), sess.Token)
+	if err != nil {
+		s.seitenFehler(w, r, err)
+		return
+	}
+	libs, err := s.jf.Libraries(r.Context(), sess.Token)
+	if err != nil {
+		s.seitenFehler(w, r, err)
+		return
+	}
+	daten := usersData{Title: "Jellyfin Zugriff"}
+	for _, u := range users {
+		daten.Users = append(daten.Users, userRow{
+			ID:       u.ID,
+			Name:     u.Name,
+			Admin:    u.Admin,
+			Disabled: u.Access.Disabled,
+			Access:   zugriffText(u, len(libs)),
+		})
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "users", daten); err != nil {
+		log.Printf("Benutzerliste nicht darstellbar: %v", err)
+	}
 }
 
 // handleUpdateAccess ist der Platzhalter für das Speichern der Zugriffsrechte

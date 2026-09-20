@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -286,4 +287,91 @@ func TestLoeschCookieHatDieselbenAttribute(t *testing.T) {
 		return
 	}
 	t.Fatal("Lösch-Cookie fehlt")
+}
+
+func beispielBenutzer() []jellyfin.User {
+	return []jellyfin.User{
+		{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Disabled: true, Folders: []string{"lib-a"}}},
+		{ID: "u-1", Name: "papa", Admin: true, Access: jellyfin.Access{AllFolders: true}},
+	}
+}
+
+func beispielBibliotheken() []jellyfin.Library {
+	return []jellyfin.Library{{ID: "lib-a", Name: "Filme"}, {ID: "lib-b", Name: "Serien"}}
+}
+
+func holen(t *testing.T, h http.Handler, pfad string, c *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, pfad, nil)
+	if c != nil {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestListeZeigtBenutzerMitStatus(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.users, jf.libs = beispielBenutzer(), beispielBibliotheken()
+
+	rec := holen(t, h, "/", angemeldet(t, store))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Code = %d, erwartet 200", rec.Code)
+	}
+	rumpf := rec.Body.String()
+	for _, teil := range []string{"kind1", "papa", "Administrator", "Aus", "Aktiv", `href="/users/u-2"`} {
+		if !strings.Contains(rumpf, teil) {
+			t.Errorf("Liste ohne %q", teil)
+		}
+	}
+}
+
+func TestZugriffTextInDerListe(t *testing.T) {
+	cases := []struct {
+		name   string
+		access jellyfin.Access
+		text   string
+	}{
+		{"alle künftigen", jellyfin.Access{AllFolders: true}, "Alle Bibliotheken"},
+		{"keine", jellyfin.Access{}, "Keine Bibliothek"},
+		{"eine von zwei", jellyfin.Access{Folders: []string{"lib-a"}}, "1 von 2 Bibliotheken"},
+		{"alle angehakt", jellyfin.Access{Folders: []string{"lib-a", "lib-b"}}, "Alle 2 Bibliotheken (ohne künftige)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, jf, store := aufbau(t)
+			jf.libs = beispielBibliotheken()
+			jf.users = []jellyfin.User{{ID: "u-2", Name: "kind1", Access: tc.access}}
+
+			rec := holen(t, h, "/", angemeldet(t, store))
+			if !strings.Contains(rec.Body.String(), tc.text) {
+				t.Errorf("Liste ohne %q", tc.text)
+			}
+		})
+	}
+}
+
+func TestListeBeiAbgelaufenemTokenLeitetAufLogin(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.usersErr = &jellyfin.Error{Status: http.StatusUnauthorized, Message: "Die Anmeldung ist abgelaufen."}
+
+	c := angemeldet(t, store)
+	rec := holen(t, h, "/", c)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("Code = %d, Location = %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, ok := store.Get(c.Value); ok {
+		t.Error("die tote Sitzung muss verworfen werden")
+	}
+}
+
+func TestListeBeiJellyfinAusfallGibt502(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.usersErr = errors.New("Verbindung abgelehnt")
+
+	rec := holen(t, h, "/", angemeldet(t, store))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("Code = %d, erwartet 502", rec.Code)
+	}
 }
