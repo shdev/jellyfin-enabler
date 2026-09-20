@@ -36,7 +36,7 @@ Relevante Felder:
 
 - `UserDto`: `Id`, `Name`, `Policy`
 - `UserPolicy`: `IsDisabled`, `EnabledFolders` (Liste von Bibliotheks-IDs),
-  `EnableAllFolders`, `IsAdministrator` — insgesamt 43 Felder
+  `EnableAllFolders`, `IsAdministrator` — insgesamt 44 Felder
 - `VirtualFolderInfo`: `Name`, `ItemId`, `CollectionType`.
   `ItemId` ist der Wert, der in `EnabledFolders` steht.
 
@@ -121,7 +121,7 @@ Modulname: `jellyfinenabler`.
 
 `POST /Users/{userId}/Policy` **ersetzt die Policy vollständig**; ein PATCH
 gibt es nicht. Würde der Dienst die Policy in ein Go-Struct mit nur den
-benötigten Feldern lesen und zurückschreiben, löschte er die übrigen 40
+benötigten Feldern lesen und zurückschreiben, löschte er die übrigen 41
 Felder — Transcoding-Rechte, Zugriffszeitfenster, `MaxParentalRating`,
 Sitzungslimits. Das ist der Fehler, in den selbstgebaute Jellyfin-Werkzeuge
 regelmäßig laufen.
@@ -207,8 +207,8 @@ Cookie und Sitzungseintrag.
 | Route | Zweck |
 |---|---|
 | `GET /login` | Anmeldeformular; leitet bei gültiger Sitzung auf `/` |
-| `POST /api/login` | `{username, password}` → Cookie |
-| `POST /api/logout` | Jellyfin-Logout, Cookie löschen |
+| `POST /login` | Formular-POST mit `username`/`password` → Cookie |
+| `POST /logout` | Jellyfin-Logout, Cookie löschen |
 | `GET /{$}` | Benutzerliste, servergerendert |
 | `GET /users/{id}` | Detailseite, Ausgangszustand servergerendert |
 | `PUT /api/users/{id}/access` | Speichern, ein Read-Modify-Write |
@@ -216,9 +216,12 @@ Cookie und Sitzungseintrag.
 | `GET /manifest.webmanifest` | PWA-Manifest |
 | `GET /healthz` | Docker-Healthcheck, ohne Anmeldung |
 
-Alle Routen außer `/login`, `/api/login`, `/healthz` und `/static/…`
+Alle Routen außer `/login`, `/healthz` und `/static/…`
 erfordern eine gültige Sitzung. Fehlt sie, antworten Seitenrouten mit einer
 Weiterleitung auf `/login`, API-Routen mit `401`.
+
+An- und Abmeldung laufen als klassische Formulare, damit sie ohne
+JavaScript funktionieren; JSON bleibt allein dem Speichern vorbehalten.
 
 Die Benutzerliste zeigt pro Benutzer: Name, Aktiv-Pille, die
 Bibliotheksfreigabe als „Alle Bibliotheken" oder „5 von 7", und bei
@@ -344,7 +347,7 @@ Testgetrieben: zu jedem Verhalten zuerst der Test.
 fälscht:
 
 - **`TestUpdateAccessPreservesUnknownPolicyFields`** — der wichtigste Test:
-  eine Policy mit allen 43 Feldern plus einem erfundenen Zusatzfeld geht
+  eine Policy mit allen 44 Feldern plus einem erfundenen Zusatzfeld geht
   hinein, `IsDisabled` wird geändert, und alle übrigen Felder müssen
   byteidentisch wieder herauskommen
 - `Authorization`-Header wird korrekt zusammengesetzt (mit und ohne Token)
