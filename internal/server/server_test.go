@@ -488,8 +488,80 @@ func TestDetailseiteGrautAdminSchalterAus(t *testing.T) {
 	if !strings.Contains(rumpf, "Administratoren können nicht deaktiviert werden.") {
 		t.Error("Hinweis für Administratoren fehlt")
 	}
-	if !strings.Contains(rumpf, "disabled") {
-		t.Error("der Aktiv-Schalter muss für Administratoren ausgegraut sein")
+}
+
+// eingabeFeld liefert das öffnende Tag des Elements mit der angegebenen id.
+// Nötig, weil eine Suche nach "disabled" oder "checked" irgendwo auf der
+// Seite auch vom Speichern-Knopf oder von einem Chip stammen könnte.
+func eingabeFeld(t *testing.T, rumpf, id string) string {
+	t.Helper()
+	marke := `id="` + id + `"`
+	pos := strings.Index(rumpf, marke)
+	if pos == -1 {
+		t.Fatalf("Element mit id %q nicht gefunden", id)
+	}
+	anfang := strings.LastIndex(rumpf[:pos], "<")
+	ende := strings.Index(rumpf[pos:], ">")
+	if anfang == -1 || ende == -1 {
+		t.Fatalf("Element mit id %q ist nicht abgeschlossen", id)
+	}
+	return rumpf[anfang : pos+ende+1]
+}
+
+func TestDetailseiteHaktDenRichtigenSchalterAn(t *testing.T) {
+	cases := []struct {
+		name        string
+		disabled    bool
+		anErwartet  bool
+		ausErwartet bool
+	}{
+		{"aktiver Benutzer", false, true, false},
+		{"deaktivierter Benutzer", true, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, jf, store := aufbau(t)
+			jf.libs = beispielBibliotheken()
+			jf.user = jellyfin.User{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Disabled: tc.disabled}}
+
+			rumpf := holen(t, h, "/users/u-2", angemeldet(t, store)).Body.String()
+			an := eingabeFeld(t, rumpf, "enabled-on")
+			aus := eingabeFeld(t, rumpf, "enabled-off")
+			if strings.Contains(an, "checked") != tc.anErwartet {
+				t.Errorf("enabled-on = %s, checked erwartet: %v", an, tc.anErwartet)
+			}
+			if strings.Contains(aus, "checked") != tc.ausErwartet {
+				t.Errorf("enabled-off = %s, checked erwartet: %v", aus, tc.ausErwartet)
+			}
+		})
+	}
+}
+
+func TestDetailseiteSperrtBeideSchalterBeiAdmin(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.user = jellyfin.User{ID: "u-1", Name: "papa", Admin: true, Access: jellyfin.Access{AllFolders: true}}
+
+	rumpf := holen(t, h, "/users/u-1", angemeldet(t, store)).Body.String()
+	for _, id := range []string{"enabled-on", "enabled-off"} {
+		if feld := eingabeFeld(t, rumpf, id); !strings.Contains(feld, "disabled") {
+			t.Errorf("%s ist bei einem Administrator nicht gesperrt: %s", id, feld)
+		}
+	}
+}
+
+// Gegenstück zum vorigen Test: ohne diesen bliebe unbemerkt, wenn der
+// Schalter versehentlich für alle Benutzer gesperrt würde.
+func TestDetailseiteSperrtSchalterNichtBeiNormalemBenutzer(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.user = jellyfin.User{ID: "u-2", Name: "kind1"}
+
+	rumpf := holen(t, h, "/users/u-2", angemeldet(t, store)).Body.String()
+	for _, id := range []string{"enabled-on", "enabled-off"} {
+		if feld := eingabeFeld(t, rumpf, id); strings.Contains(feld, "disabled") {
+			t.Errorf("%s darf bei einem normalen Benutzer nicht gesperrt sein: %s", id, feld)
+		}
 	}
 }
 
