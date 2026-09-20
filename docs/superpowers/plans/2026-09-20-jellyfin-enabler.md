@@ -2230,6 +2230,14 @@ func TestNoStoreAufAllenAntworten(t *testing.T) {
 }
 ```
 
+> **Nachtrag aus dem Review (umgesetzt in `80bb40c`):** Die Tests oben prüfen
+> das `Secure`-Flag des Sitzungscookies nicht — alle drei Zweige von `secure()`
+> blieben ungetestet, eine vertauschte Bedingung wäre unbemerkt geblieben.
+> Ergänzt wurden deshalb eine Hilfsfunktion `aufbauMit(t, cookieSecure)`, ein
+> Tabellentest `TestSecureFlagAmSitzungscookie` über vier Fälle (`"true"` ohne
+> TLS, `"false"` **mit** TLS, `"auto"` ohne und mit TLS, Letzteres über
+> `req.TLS = &tls.ConnectionState{}`) und `TestLoeschCookieHatDieselbenAttribute`.
+
 - [ ] **Step 2: Tests laufen lassen, Fehlschlag bestätigen**
 
 Run: `go test ./internal/server/...`
