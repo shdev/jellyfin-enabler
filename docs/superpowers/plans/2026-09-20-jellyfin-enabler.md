@@ -22,8 +22,10 @@ Diese Vorgaben gelten für **jede** Aufgabe:
 - Testdateien liegen als `package <name>_test` neben dem Code, außer wo der Plan ausdrücklich einen internen Test verlangt.
 - Container-Port ist **8080**, Host-Port **8081**.
 - `TAILWIND_VERSION` ist **4.3.3** und muss in `Makefile` und `Dockerfile` identisch sein.
-- Jede Commit-Botschaft endet mit der Zeile:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+- Jede Commit-Botschaft endet mit der `Co-Authored-By:`-Attributionszeile, die
+  das eigene Harness vorgibt — sie nennt das Modell, das den Commit
+  tatsächlich geschrieben hat. Die Beispiel-Commits unten zeigen die Zeile des
+  Controllers; ein Implementer setzt stattdessen seine eigene ein.
 - Das Nachbarprojekt `/Users/sh/projects/yt-dl-web-client` ist die Stilvorlage für Aufbau, Kommentardichte und Teststil. Bei Zweifeln dort nachsehen.
 
 ## Dateistruktur
