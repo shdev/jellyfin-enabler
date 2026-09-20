@@ -423,3 +423,57 @@ func TestListeOrdnetStatusDemRichtigenBenutzerZu(t *testing.T) {
 		t.Error("papa muss als Administrator markiert sein")
 	}
 }
+
+func TestZugriffTextZaehltNurVorhandeneBibliotheken(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken() // lib-a, lib-b
+	// In der Policy stehen nur IDs gelöschter Bibliotheken. Ein reiner
+	// Zählvergleich meldete hier fälschlich "Alle 2 Bibliotheken".
+	jf.users = []jellyfin.User{
+		{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Folders: []string{"alt-x", "alt-y"}}},
+	}
+
+	rumpf := holen(t, h, "/", angemeldet(t, store)).Body.String()
+	if !strings.Contains(rumpf, "Keine Bibliothek") {
+		t.Errorf("erwartet \"Keine Bibliothek\", bekommen: %s", rumpf)
+	}
+	if strings.Contains(rumpf, "Alle 2 Bibliotheken") {
+		t.Error("gelöschte Bibliotheken dürfen nicht als Zugriff gezählt werden")
+	}
+}
+
+func TestZugriffTextGemischtVorhandenUndGeloescht(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.users = []jellyfin.User{
+		{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Folders: []string{"lib-a", "alt-x"}}},
+	}
+
+	rumpf := holen(t, h, "/", angemeldet(t, store)).Body.String()
+	if !strings.Contains(rumpf, "1 von 2 Bibliotheken") {
+		t.Errorf("erwartet \"1 von 2 Bibliotheken\", bekommen: %s", rumpf)
+	}
+}
+
+func TestListeOrdnetZugriffstextDemRichtigenBenutzerZu(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.users = []jellyfin.User{
+		{ID: "u-1", Name: "papa", Admin: true, Access: jellyfin.Access{AllFolders: true}},
+		{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Folders: []string{"lib-a"}}},
+	}
+
+	rumpf := holen(t, h, "/", angemeldet(t, store)).Body.String()
+
+	papa := kartenAusschnitt(t, rumpf, "u-1")
+	if !strings.Contains(papa, "Alle Bibliotheken") {
+		t.Errorf("papa-Karte ohne \"Alle Bibliotheken\": %s", papa)
+	}
+	kind := kartenAusschnitt(t, rumpf, "u-2")
+	if !strings.Contains(kind, "1 von 2 Bibliotheken") {
+		t.Errorf("kind1-Karte ohne \"1 von 2 Bibliotheken\": %s", kind)
+	}
+	if strings.Contains(kind, "Alle Bibliotheken") {
+		t.Error("der Zugriffstext von papa ist bei kind1 gelandet")
+	}
+}

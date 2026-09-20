@@ -224,19 +224,33 @@ type usersData struct {
 	Users []userRow
 }
 
-// zugriffText beschreibt die Bibliotheksfreigabe in einem Satz. "Alle
-// Bibliotheken" und "alle angehakt" sind bewusst unterschiedliche Aussagen:
-// nur Ersteres schließt künftig neue Bibliotheken ein
+// zugriffText beschreibt die Bibliotheksfreigabe in einem Satz. Gezählt werden
+// ausschließlich Freigaben auf Bibliotheken, die es noch gibt: in der Policy
+// können IDs gelöschter Bibliotheken zurückbleiben, und die dürfen nicht als
+// Zugriff erscheinen. "Alle Bibliotheken" und "alle angehakt" sind bewusst
+// verschiedene Aussagen — nur Ersteres schließt künftig neue ein
 // (Spec §EnableAllFolders-Semantik).
-func zugriffText(u jellyfin.User, gesamt int) string {
+func zugriffText(u jellyfin.User, libs []jellyfin.Library) string {
 	if u.Access.AllFolders {
 		return "Alle Bibliotheken"
 	}
-	n := len(u.Access.Folders)
+	vorhanden := make(map[string]bool, len(libs))
+	for _, l := range libs {
+		vorhanden[l.ID] = true
+	}
+	n := 0
+	for _, f := range u.Access.Folders {
+		if vorhanden[f] {
+			n++
+		}
+	}
+	gesamt := len(libs)
 	switch {
 	case n == 0:
 		return "Keine Bibliothek"
-	case n >= gesamt && gesamt > 0:
+	case gesamt == 1:
+		return "Die einzige Bibliothek (ohne künftige)"
+	case n >= gesamt:
 		return fmt.Sprintf("Alle %d Bibliotheken (ohne künftige)", gesamt)
 	default:
 		return fmt.Sprintf("%d von %d Bibliotheken", n, gesamt)
@@ -276,7 +290,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, sess sessio
 			Name:     u.Name,
 			Admin:    u.Admin,
 			Disabled: u.Access.Disabled,
-			Access:   zugriffText(u, len(libs)),
+			Access:   zugriffText(u, libs),
 		})
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "users", daten); err != nil {
