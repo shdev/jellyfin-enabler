@@ -375,3 +375,51 @@ func TestListeBeiJellyfinAusfallGibt502(t *testing.T) {
 		t.Errorf("Code = %d, erwartet 502", rec.Code)
 	}
 }
+
+// kartenAusschnitt liefert den HTML-Ausschnitt der Karte eines Benutzers.
+// Nötig, weil eine Teilstring-Prüfung über die ganze Seite nicht bemerkt,
+// wenn Status und Markierung beim falschen Benutzer landen.
+func kartenAusschnitt(t *testing.T, rumpf, userID string) string {
+	t.Helper()
+	start := strings.Index(rumpf, `href="/users/`+userID+`"`)
+	if start == -1 {
+		t.Fatalf("Karte für %s nicht gefunden", userID)
+	}
+	rest := rumpf[start:]
+	ende := strings.Index(rest, "</a>")
+	if ende == -1 {
+		t.Fatalf("Karte für %s ist nicht abgeschlossen", userID)
+	}
+	return rest[:ende]
+}
+
+func TestListeOrdnetStatusDemRichtigenBenutzerZu(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.users, jf.libs = beispielBenutzer(), beispielBibliotheken()
+
+	rumpf := holen(t, h, "/", angemeldet(t, store)).Body.String()
+
+	// kind1 (u-2): deaktiviert, kein Administrator.
+	kind := kartenAusschnitt(t, rumpf, "u-2")
+	if !strings.Contains(kind, "pill-err") {
+		t.Error("kind1 muss als deaktiviert dargestellt sein")
+	}
+	if strings.Contains(kind, "pill-ok") {
+		t.Error("kind1 darf nicht als aktiv dargestellt sein")
+	}
+	if strings.Contains(kind, "Administrator") {
+		t.Error("kind1 ist kein Administrator")
+	}
+
+	// papa (u-1): aktiv und Administrator.
+	papa := kartenAusschnitt(t, rumpf, "u-1")
+	if !strings.Contains(papa, "pill-ok") {
+		t.Error("papa muss als aktiv dargestellt sein")
+	}
+	if strings.Contains(papa, "pill-err") {
+		t.Error("papa darf nicht als deaktiviert dargestellt sein")
+	}
+	if !strings.Contains(papa, "Administrator") {
+		t.Error("papa muss als Administrator markiert sein")
+	}
+}
