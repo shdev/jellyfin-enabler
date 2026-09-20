@@ -1258,6 +1258,19 @@ func TestUpdateAccessErhaeltAlleUebrigenPolicyFelder(t *testing.T) {
 			t.Errorf("Feld %s verändert: %s -> %s", name, kompakt(t, wert), kompakt(t, neu))
 		}
 	}
+
+	// Die drei verwalteten Felder werden oben übersprungen. Ohne diese Prüfung
+	// bliebe eine Vertauschung von IsDisabled und EnableAllFolders unbemerkt:
+	// im Betrieb hieße das, "Benutzer deaktivieren" gäbe alle Bibliotheken frei.
+	for name, erwartet := range map[string]string{
+		"IsDisabled":       "true",
+		"EnableAllFolders": "false",
+		"EnabledFolders":   `["lib-a","lib-c"]`,
+	} {
+		if got := kompakt(t, (*geschrieben)[name]); got != erwartet {
+			t.Errorf("Feld %s = %s, erwartet %s", name, got, erwartet)
+		}
+	}
 }
 
 func TestUpdateAccessSchreibtDieDreiVerwaltetenFelder(t *testing.T) {
