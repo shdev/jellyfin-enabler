@@ -471,11 +471,11 @@ func TestDetailseiteZeigtBibliotheken(t *testing.T) {
 		}
 	}
 	// Filme ist freigegeben, Serien nicht.
-	if !strings.Contains(rumpf, `value="lib-a" checked`) {
-		t.Error("die freigegebene Bibliothek ist nicht angehakt")
+	if a := chipFeld(t, rumpf, "lib-a"); !strings.Contains(a, "checked") {
+		t.Errorf("die freigegebene Bibliothek ist nicht angehakt: %s", a)
 	}
-	if strings.Contains(rumpf, `value="lib-b" checked`) {
-		t.Error("die gesperrte Bibliothek darf nicht angehakt sein")
+	if b := chipFeld(t, rumpf, "lib-b"); strings.Contains(b, "checked") {
+		t.Errorf("die gesperrte Bibliothek darf nicht angehakt sein: %s", b)
 	}
 }
 
@@ -490,22 +490,34 @@ func TestDetailseiteGrautAdminSchalterAus(t *testing.T) {
 	}
 }
 
+// tagMit liefert das öffnende Tag, das die angegebene Marke enthält.
+func tagMit(t *testing.T, rumpf, marke string) string {
+	t.Helper()
+	pos := strings.Index(rumpf, marke)
+	if pos == -1 {
+		t.Fatalf("kein Element mit %q gefunden", marke)
+	}
+	anfang := strings.LastIndex(rumpf[:pos], "<")
+	ende := strings.Index(rumpf[pos:], ">")
+	if anfang == -1 || ende == -1 {
+		t.Fatalf("Element mit %q ist nicht abgeschlossen", marke)
+	}
+	return rumpf[anfang : pos+ende+1]
+}
+
 // eingabeFeld liefert das öffnende Tag des Elements mit der angegebenen id.
 // Nötig, weil eine Suche nach "disabled" oder "checked" irgendwo auf der
 // Seite auch vom Speichern-Knopf oder von einem Chip stammen könnte.
 func eingabeFeld(t *testing.T, rumpf, id string) string {
 	t.Helper()
-	marke := `id="` + id + `"`
-	pos := strings.Index(rumpf, marke)
-	if pos == -1 {
-		t.Fatalf("Element mit id %q nicht gefunden", id)
-	}
-	anfang := strings.LastIndex(rumpf[:pos], "<")
-	ende := strings.Index(rumpf[pos:], ">")
-	if anfang == -1 || ende == -1 {
-		t.Fatalf("Element mit id %q ist nicht abgeschlossen", id)
-	}
-	return rumpf[anfang : pos+ende+1]
+	return tagMit(t, rumpf, `id="`+id+`"`)
+}
+
+// chipFeld liefert das öffnende Tag einer Bibliotheks-Checkbox. Die Chips
+// tragen keine id, sondern die Bibliotheks-ID im value.
+func chipFeld(t *testing.T, rumpf, libID string) string {
+	t.Helper()
+	return tagMit(t, rumpf, `value="`+libID+`"`)
 }
 
 func TestDetailseiteHaktDenRichtigenSchalterAn(t *testing.T) {
@@ -565,14 +577,33 @@ func TestDetailseiteSperrtSchalterNichtBeiNormalemBenutzer(t *testing.T) {
 	}
 }
 
-func TestDetailseiteGrautChipsBeiAllenBibliothekenAus(t *testing.T) {
+// Der entscheidende Fall ist die Kombination: "Alle Bibliotheken" graut die
+// Chips aus, darf ihnen aber das checked nicht nehmen — sonst wäre die
+// frühere Auswahl beim Zurückschalten verloren.
+func TestDetailseiteGrautChipsAusOhneDieAuswahlZuVerlieren(t *testing.T) {
 	h, jf, store := aufbau(t)
 	jf.libs = beispielBibliotheken()
-	jf.user = jellyfin.User{ID: "u-2", Name: "kind1", Access: jellyfin.Access{AllFolders: true}}
+	jf.user = jellyfin.User{ID: "u-2", Name: "kind1", Access: jellyfin.Access{
+		AllFolders: true,
+		Folders:    []string{"lib-a"},
+	}}
 
 	rumpf := holen(t, h, "/users/u-2", angemeldet(t, store)).Body.String()
-	if !strings.Contains(rumpf, `value="lib-a" disabled`) {
-		t.Error("die Einzelauswahl muss ausgegraut sein, solange alle Bibliotheken gelten")
+
+	a := chipFeld(t, rumpf, "lib-a")
+	if !strings.Contains(a, "disabled") {
+		t.Errorf("lib-a muss ausgegraut sein: %s", a)
+	}
+	if !strings.Contains(a, "checked") {
+		t.Errorf("lib-a muss angehakt bleiben, sonst ist die Auswahl beim Zurückschalten weg: %s", a)
+	}
+
+	b := chipFeld(t, rumpf, "lib-b")
+	if !strings.Contains(b, "disabled") {
+		t.Errorf("lib-b muss ausgegraut sein: %s", b)
+	}
+	if strings.Contains(b, "checked") {
+		t.Errorf("lib-b war nie freigegeben und darf nicht angehakt sein: %s", b)
 	}
 }
 
