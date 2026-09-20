@@ -1,0 +1,292 @@
+@import "tailwindcss";
+
+@source "../templates";
+@source "../static/app.js";
+
+/* Design-Tokens (Spec §Design-Tokens): dunkel ist Default. Hell greift
+   entweder explizit (data-theme="light", Umschalter in den Einstellungen,
+   serverseitig gerendert) oder über die Systemeinstellung, solange kein
+   explizites Dunkel (data-theme="dark") gewählt ist. Utilities
+   referenzieren ausschließlich diese Tokens.
+   color-scheme lässt UA-Widgets (Select-Picker, Scrollbars) dem aktiven
+   Theme folgen. Die theme-color-Werte in index.html und app.js müssen zu
+   den --bg-Tokens hier passen. */
+:root {
+  color-scheme: light dark;
+  --bg: #0f1116;
+  --surface: #151821;
+  --edge: #232834;
+  --edge-strong: #2a303c;
+  --text: #e2e5ea;
+  --muted: #8b919d;
+  --dim: #6f7683;
+  --accent: #6c8cff;
+  --on-accent: #0d0f14;
+  --accent-soft: #232c47;
+  --accent-soft-text: #aebfff;
+  --ok: #4ade80;
+  --ok-edge: #1e4230;
+  --danger: #f87171;
+  --danger-edge: #4a2626;
+  --warn: #fbbf24;
+  --warn-edge: #4a3a16;
+  --run-edge: #2f3b63;
+  --card-shadow: none;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Die beiden Hell-Blöcke müssen identisch bleiben (bewusst dupliziert statt
+   light-dark(), das erst ab Safari 17.5 verfügbar ist): einmal explizit
+   gewählt, einmal via System — Letzteres nur, wenn nicht explizit dunkel. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --edge: #e7eaef;
+  --edge-strong: #d6dbe3;
+  --text: #1d2129;
+  --muted: #667085;
+  --dim: #98a2b3;
+  --accent: #4c6cf5;
+  --on-accent: #ffffff;
+  --accent-soft: #e3e9fe;
+  --accent-soft-text: #3652c8;
+  --ok: #12924f;
+  --ok-edge: #b8e6cd;
+  --danger: #b42318;
+  --danger-edge: #f4b6b0;
+  --warn: #b45309;
+  --warn-edge: #f2d9a7;
+  --run-edge: #c9d4fd;
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --edge: #e7eaef;
+    --edge-strong: #d6dbe3;
+    --text: #1d2129;
+    --muted: #667085;
+    --dim: #98a2b3;
+    --accent: #4c6cf5;
+    --on-accent: #ffffff;
+    --accent-soft: #e3e9fe;
+    --accent-soft-text: #3652c8;
+    --ok: #12924f;
+    --ok-edge: #b8e6cd;
+    --danger: #b42318;
+    --danger-edge: #f4b6b0;
+    --warn: #b45309;
+    --warn-edge: #f2d9a7;
+    --run-edge: #c9d4fd;
+    --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-text: var(--accent-soft-text);
+  --color-ok: var(--ok);
+  --color-ok-edge: var(--ok-edge);
+  --color-danger: var(--danger);
+  --color-danger-edge: var(--danger-edge);
+  --color-warn: var(--warn);
+  --color-warn-edge: var(--warn-edge);
+  --color-run-edge: var(--run-edge);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  /* show()/hide() in app.js nutzen das hidden-Attribut — muss auch gegen
+     Display-Utilities (flex/grid) gewinnen. */
+  [hidden] {
+    display: none !important;
+  }
+  html {
+    /* Hintergrund auch auf html: im iOS-Standalone-Modus (black-translucent)
+       scheint sonst Weiß hinter Statusbar und Overscroll-Bereich durch. */
+    background: var(--bg);
+    /* Kein Rubber-Band-Springen der ganzen Seite beim Overscroll. */
+    overscroll-behavior-y: none;
+  }
+  html,
+  body {
+    /* Nur Scrollen erlauben: blockiert Doppeltipp-Zoom (und wo der Browser
+       es respektiert auch Pinch) — Teil der Zoom-Sperre, siehe Viewport-
+       Kommentar in index.html und die gesture-Handler in app.js. */
+    touch-action: pan-x pan-y;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    /* Notch/Home-Indicator im Standalone-Modus (viewport-fit=cover):
+       außerhalb von iOS-Standalone sind die env()-Werte schlicht 0. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  button {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-[10px] border border-edge bg-surface p-[18px];
+    box-shadow: var(--card-shadow);
+  }
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium text-muted;
+  }
+  .input,
+  .select {
+    @apply w-full rounded-lg border border-edge-strong bg-bg px-3 py-2 text-sm text-text;
+  }
+  /* iOS Safari zoomt automatisch in fokussierte Felder mit font-size < 16px —
+     die Hauptursache für das "Reinspringen" auf dem iPhone. Auf Touch-Geräten
+     deshalb 16px statt text-sm (14px); Desktop bleibt unverändert. */
+  @media (pointer: coarse) {
+    .input,
+    .select {
+      font-size: 16px;
+    }
+  }
+  .input::placeholder {
+    @apply text-dim;
+  }
+  .select {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23798093' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: right 0.6rem center;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold whitespace-nowrap;
+  }
+  .btn:disabled {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .btn-primary {
+    @apply bg-accent text-on-accent;
+  }
+  .btn-primary:hover {
+    filter: brightness(1.08);
+  }
+  .btn-ghost {
+    @apply border border-edge-strong bg-transparent font-medium text-muted;
+  }
+  .btn-ghost:hover {
+    @apply text-text;
+  }
+  .btn-sm {
+    @apply rounded-[7px] px-2.5 py-1 text-xs;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11.5px] font-medium whitespace-nowrap;
+  }
+  .pill-dot {
+    @apply size-1.5 rounded-full bg-current;
+  }
+  .pill-wait {
+    @apply border-edge-strong text-muted;
+  }
+  .pill-run {
+    @apply border-run-edge text-accent-soft-text;
+  }
+  .pill-ok {
+    @apply border-ok-edge text-ok;
+  }
+  .pill-err {
+    @apply border-danger-edge text-danger;
+  }
+  .pill-warn {
+    @apply border-warn-edge text-warn;
+  }
+  .section-title {
+    @apply text-[11.5px] font-semibold tracking-[0.09em] uppercase text-dim;
+  }
+  .seg {
+    @apply inline-flex rounded-lg border border-edge-strong bg-bg p-[3px];
+  }
+  .seg-label {
+    @apply cursor-pointer rounded-md px-3.5 py-1.5 text-[12.5px] font-medium text-muted select-none;
+  }
+  .seg input:checked + .seg-label {
+    background: var(--accent-soft);
+    color: var(--accent-soft-text);
+  }
+  .seg input:focus-visible + .seg-label {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .chip {
+    @apply inline-flex cursor-pointer items-center rounded-full border border-edge-strong px-3 py-1 text-[12.5px] font-medium text-muted select-none;
+  }
+  input:checked + .chip {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: var(--accent-soft-text);
+  }
+  input:focus-visible + .chip {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  /* Ausgegraut, solange "Alle Bibliotheken" gesetzt ist: die Einzelauswahl
+     bleibt sichtbar, ist aber wirkungslos (Spec §EnableAllFolders-Semantik). */
+  input:disabled + .chip {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .toast-region {
+    @apply fixed z-50 flex flex-col items-end gap-2;
+    /* Fixed-Elemente positionieren sich gegen den Viewport — das Safe-Area-
+       Padding auf body wirkt hier nicht. Ohne die env()-Offsets ragt der
+       Toast im iOS-Standalone-Modus (viewport-fit=cover) in Home-Indicator-
+       bzw. Landscape-Notch-Zone; außerhalb iOS ist env() schlicht 0. */
+    right: calc(1.25rem + env(safe-area-inset-right));
+    bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
+  .toast {
+    @apply flex items-center gap-2 rounded-[9px] border border-edge-strong bg-surface px-3.5 py-2.5 text-[12.5px] text-text shadow-lg;
+    animation: toast-in 200ms ease-out;
+  }
+  .toast-dot {
+    @apply size-[7px] shrink-0 rounded-full;
+  }
+  .toast-ok .toast-dot {
+    background: var(--ok);
+  }
+  .toast-warn .toast-dot {
+    background: var(--warn);
+  }
+  .toast-err .toast-dot {
+    background: var(--danger);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}

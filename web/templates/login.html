@@ -1,0 +1,19 @@
+{{define "login"}}{{template "head" .}}
+    <header class="mb-6">
+      <h1 class="text-[17px] font-semibold tracking-tight">Jellyfin <span class="text-accent">Zugriff</span></h1>
+    </header>
+    <section class="card">
+      <form class="grid gap-4" method="post" action="/login">
+        <div>
+          <label class="field-label" for="username">Administrator</label>
+          <input class="input" type="text" id="username" name="username" autocomplete="username" autofocus required>
+        </div>
+        <div>
+          <label class="field-label" for="password">Passwort</label>
+          <input class="input" type="password" id="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn btn-primary" type="submit">Anmelden</button>
+        {{if .Error}}<div class="text-sm text-danger">{{.Error}}</div>{{end}}
+      </form>
+    </section>
+{{template "foot" .}}{{end}}
