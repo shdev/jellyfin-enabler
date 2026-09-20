@@ -902,7 +902,7 @@ git commit -m "$(printf '%s\n' \
   - `(*Client).Users(ctx context.Context, token string) ([]User, error)`
   - `(*Client).User(ctx context.Context, token, userID string) (User, error)`
   - `(*Client).Libraries(ctx context.Context, token string) ([]Library, error)`
-  - paketintern: `rawUser` mit `Policy map[string]json.RawMessage` und `(rawUser).user() (User, error)`
+  - paketintern: `rawUser` mit `Policy map[string]json.RawMessage`, `(rawUser).view() (User, error)` und `(*Client).rawUser(ctx, token, userID) (rawUser, error)`
 
 - [ ] **Step 1: Die fehlschlagenden Tests anhängen**
 
