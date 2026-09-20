@@ -455,6 +455,65 @@ func TestZugriffTextGemischtVorhandenUndGeloescht(t *testing.T) {
 	}
 }
 
+func TestDetailseiteZeigtBibliotheken(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.user = jellyfin.User{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Folders: []string{"lib-a"}}}
+
+	rec := holen(t, h, "/users/u-2", angemeldet(t, store))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Code = %d, erwartet 200", rec.Code)
+	}
+	rumpf := rec.Body.String()
+	for _, teil := range []string{"kind1", "Filme", "Serien", `data-user-id="u-2"`, "Alle Bibliotheken, auch künftig neue"} {
+		if !strings.Contains(rumpf, teil) {
+			t.Errorf("Detailseite ohne %q", teil)
+		}
+	}
+	// Filme ist freigegeben, Serien nicht.
+	if !strings.Contains(rumpf, `value="lib-a" checked`) {
+		t.Error("die freigegebene Bibliothek ist nicht angehakt")
+	}
+	if strings.Contains(rumpf, `value="lib-b" checked`) {
+		t.Error("die gesperrte Bibliothek darf nicht angehakt sein")
+	}
+}
+
+func TestDetailseiteGrautAdminSchalterAus(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.user = jellyfin.User{ID: "u-1", Name: "papa", Admin: true, Access: jellyfin.Access{AllFolders: true}}
+
+	rumpf := holen(t, h, "/users/u-1", angemeldet(t, store)).Body.String()
+	if !strings.Contains(rumpf, "Administratoren können nicht deaktiviert werden.") {
+		t.Error("Hinweis für Administratoren fehlt")
+	}
+	if !strings.Contains(rumpf, "disabled") {
+		t.Error("der Aktiv-Schalter muss für Administratoren ausgegraut sein")
+	}
+}
+
+func TestDetailseiteGrautChipsBeiAllenBibliothekenAus(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.user = jellyfin.User{ID: "u-2", Name: "kind1", Access: jellyfin.Access{AllFolders: true}}
+
+	rumpf := holen(t, h, "/users/u-2", angemeldet(t, store)).Body.String()
+	if !strings.Contains(rumpf, `value="lib-a" disabled`) {
+		t.Error("die Einzelauswahl muss ausgegraut sein, solange alle Bibliotheken gelten")
+	}
+}
+
+func TestDetailseiteUnbekannterBenutzer(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.userErr = &jellyfin.Error{Status: http.StatusNotFound, Message: "Der Benutzer existiert nicht mehr."}
+
+	rec := holen(t, h, "/users/gibt-es-nicht", angemeldet(t, store))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Code = %d, erwartet 404", rec.Code)
+	}
+}
+
 func TestListeOrdnetZugriffstextDemRichtigenBenutzerZu(t *testing.T) {
 	h, jf, store := aufbau(t)
 	jf.libs = beispielBibliotheken()

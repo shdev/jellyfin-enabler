@@ -1,0 +1,43 @@
+{{define "user"}}{{template "head" .}}
+    <header class="mb-6 flex items-center justify-between gap-3">
+      <a class="btn btn-ghost btn-sm no-underline" href="/">Zurück</a>
+      <h1 class="truncate text-[17px] font-semibold tracking-tight">{{.User.Name}}</h1>
+    </header>
+
+    <section class="card grid gap-4" id="user-form" data-user-id="{{.User.ID}}">
+      <div>
+        <div class="field-label">Konto</div>
+        <div class="seg" role="radiogroup" aria-label="Konto">
+          <input class="sr-only" type="radio" name="enabled" id="enabled-on" value="on"{{if not .User.Access.Disabled}} checked{{end}}{{if .User.Admin}} disabled{{end}}>
+          <label class="seg-label" for="enabled-on">Aktiv</label>
+          <input class="sr-only" type="radio" name="enabled" id="enabled-off" value="off"{{if .User.Access.Disabled}} checked{{end}}{{if .User.Admin}} disabled{{end}}>
+          <label class="seg-label" for="enabled-off">Aus</label>
+        </div>
+        {{if .User.Admin}}<div class="mt-1.5 text-xs text-muted">Administratoren können nicht deaktiviert werden.</div>{{end}}
+      </div>
+
+      <div class="h-px bg-edge"></div>
+
+      <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+        <input type="checkbox" id="all-folders"{{if .User.Access.AllFolders}} checked{{end}}>
+        Alle Bibliotheken, auch künftig neue
+      </label>
+
+      <div>
+        <div class="field-label">Bibliotheken</div>
+        <div class="flex flex-wrap gap-2" id="libraries">
+          {{range .Libraries}}
+          <label>
+            <input class="sr-only" type="checkbox" name="folder" value="{{.ID}}"{{if .Checked}} checked{{end}}{{if $.User.Access.AllFolders}} disabled{{end}}>
+            <span class="chip">{{.Name}}</span>
+          </label>
+          {{end}}
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button class="btn btn-primary" id="save-btn" type="button" disabled>Speichern</button>
+        <span class="text-xs text-muted" id="save-hint">Keine Änderungen</span>
+      </div>
+    </section>
+{{template "foot" .}}{{end}}

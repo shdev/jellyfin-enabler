@@ -51,6 +51,7 @@ func New(jf Jellyfin, sessions *session.Store, cookieSecure string) http.Handler
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET /{$}", s.seite(s.handleIndex))
+	mux.HandleFunc("GET /users/{id}", s.seite(s.handleUserPage))
 	mux.HandleFunc("PUT /api/users/{id}/access", s.api(s.handleUpdateAccess))
 	return noStore(mux)
 }
@@ -295,6 +296,51 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, sess sessio
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "users", daten); err != nil {
 		log.Printf("Benutzerliste nicht darstellbar: %v", err)
+	}
+}
+
+type libraryRow struct {
+	ID      string
+	Name    string
+	Checked bool
+}
+
+type userData struct {
+	Title     string
+	User      jellyfin.User
+	Libraries []libraryRow
+}
+
+// handleUserPage zeigt die Detailseite eines Benutzers. Ein nicht mehr
+// vorhandener Benutzer ist kein Ausfall der Gegenstelle, sondern ein
+// gewöhnliches 404 — z. B. wenn er zwischen Liste und Klick gelöscht wurde.
+func (s *Server) handleUserPage(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	id := r.PathValue("id")
+	u, err := s.jf.User(r.Context(), sess.Token, id)
+	if err != nil {
+		var jfErr *jellyfin.Error
+		if errors.As(err, &jfErr) && jfErr.Status == http.StatusNotFound {
+			http.Error(w, jfErr.Message, http.StatusNotFound)
+			return
+		}
+		s.seitenFehler(w, r, err)
+		return
+	}
+	libs, err := s.jf.Libraries(r.Context(), sess.Token)
+	if err != nil {
+		s.seitenFehler(w, r, err)
+		return
+	}
+	freigegeben := make(map[string]bool, len(u.Access.Folders))
+	for _, f := range u.Access.Folders {
+		freigegeben[f] = true
+	}
+	daten := userData{Title: u.Name + " · Jellyfin Zugriff", User: u}
+	for _, l := range libs {
+		daten.Libraries = append(daten.Libraries, libraryRow{ID: l.ID, Name: l.Name, Checked: freigegeben[l.ID]})
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "user", daten); err != nil {
+		log.Printf("Detailseite nicht darstellbar: %v", err)
 	}
 }
 
