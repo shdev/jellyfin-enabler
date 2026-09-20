@@ -219,3 +219,44 @@ func (c *Client) Libraries(ctx context.Context, token string) ([]Library, error)
 	})
 	return libs, nil
 }
+
+// UpdateAccess liest die Policy frisch, ersetzt genau drei Schlüssel und
+// schreibt sie zurück. POST /Users/{id}/Policy ersetzt die Policy vollständig
+// — deshalb Read-Modify-Write über die Rohdaten, damit die übrigen 41 Felder
+// unangetastet bleiben (Spec §Policy-Passthrough).
+func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Access) (Access, error) {
+	r, err := c.rawUser(ctx, token, userID)
+	if err != nil {
+		return Access{}, err
+	}
+	if r.Policy == nil {
+		return Access{}, fmt.Errorf("jellyfin: Benutzer %s hat keine Policy", userID)
+	}
+	// Jellyfin erwartet eine Liste, kein null.
+	folders := a.Folders
+	if folders == nil {
+		folders = []string{}
+	}
+	set := func(name string, wert any) error {
+		b, err := json.Marshal(wert)
+		if err != nil {
+			return err
+		}
+		r.Policy[name] = b
+		return nil
+	}
+	if err := set("IsDisabled", a.Disabled); err != nil {
+		return Access{}, err
+	}
+	if err := set("EnableAllFolders", a.AllFolders); err != nil {
+		return Access{}, err
+	}
+	if err := set("EnabledFolders", folders); err != nil {
+		return Access{}, err
+	}
+	path := "/Users/" + url.PathEscape(userID) + "/Policy"
+	if err := c.do(ctx, http.MethodPost, path, token, "", r.Policy, nil); err != nil {
+		return Access{}, err
+	}
+	return Access{Disabled: a.Disabled, AllFolders: a.AllFolders, Folders: folders}, nil
+}

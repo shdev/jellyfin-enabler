@@ -284,3 +284,174 @@ func TestLesenSendetToken(t *testing.T) {
 		t.Errorf("Authorization = %q, erwartet Token", f.call(0).Auth)
 	}
 }
+
+// vollePolicy enthält alle 44 UserPolicy-Felder aus der OpenAPI-Spezifikation
+// von Jellyfin plus ein erfundenes Feld, wie es ein Plugin oder eine spätere
+// Version einführen könnte. Keines davon darf beim Schreiben verloren gehen.
+const vollePolicy = `{
+  "IsAdministrator": false,
+  "IsHidden": true,
+  "EnableCollectionManagement": false,
+  "EnableSubtitleManagement": false,
+  "EnableLyricManagement": false,
+  "IsDisabled": false,
+  "MaxParentalRating": 10,
+  "MaxParentalSubRating": null,
+  "BlockedTags": ["horror"],
+  "AllowedTags": [],
+  "EnableUserPreferenceAccess": true,
+  "AccessSchedules": [{"Id": 1, "UserId": "u-2", "DayOfWeek": "Monday", "StartHour": 8.0, "EndHour": 20.0}],
+  "BlockUnratedItems": ["Movie"],
+  "EnableRemoteControlOfOtherUsers": false,
+  "EnableSharedDeviceControl": true,
+  "EnableRemoteAccess": true,
+  "EnableLiveTvManagement": false,
+  "EnableLiveTvAccess": true,
+  "EnableMediaPlayback": true,
+  "EnableAudioPlaybackTranscoding": true,
+  "EnableVideoPlaybackTranscoding": false,
+  "EnablePlaybackRemuxing": true,
+  "ForceRemoteSourceTranscoding": false,
+  "EnableContentDeletion": false,
+  "EnableContentDeletionFromFolders": [],
+  "EnableContentDownloading": true,
+  "EnableSyncTranscoding": true,
+  "EnableMediaConversion": false,
+  "EnabledDevices": [],
+  "EnableAllDevices": true,
+  "EnabledChannels": [],
+  "EnableAllChannels": false,
+  "EnabledFolders": ["lib-a"],
+  "EnableAllFolders": false,
+  "InvalidLoginAttemptCount": 0,
+  "LoginAttemptsBeforeLockout": -1,
+  "MaxActiveSessions": 0,
+  "EnablePublicSharing": false,
+  "BlockedMediaFolders": [],
+  "BlockedChannels": [],
+  "RemoteClientBitrateLimit": 0,
+  "AuthenticationProviderId": "Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider",
+  "PasswordResetProviderId": "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider",
+  "SyncPlayAccess": "CreateAndJoinGroups",
+  "EinFeldDasDerClientNichtKennt": {"a": 1, "b": [true, null]}
+}`
+
+// kompakt normalisiert JSON-Werte, damit Einrückung im Testliteral den
+// Vergleich nicht stört — der Encoder sendet kompakt.
+func kompakt(t *testing.T, b []byte) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, b); err != nil {
+		t.Fatalf("ungültiges JSON %s: %v", b, err)
+	}
+	return buf.String()
+}
+
+// policySchreiber richtet den gefälschten Server so ein, dass er die Policy
+// liefert und die geschriebene Policy festhält.
+func policySchreiber(t *testing.T, f *fakeJellyfin, policy string) *map[string]json.RawMessage {
+	t.Helper()
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"kind1","Policy":`+policy+`}`)
+	geschrieben := map[string]json.RawMessage{}
+	f.handle("/Users/u-2/Policy", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&geschrieben); err != nil {
+			t.Errorf("geschriebene Policy nicht lesbar: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	return &geschrieben
+}
+
+func TestUpdateAccessErhaeltAlleUebrigenPolicyFelder(t *testing.T) {
+	f := newFake(t)
+	geschrieben := policySchreiber(t, f, vollePolicy)
+
+	_, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{
+		Disabled:   true,
+		AllFolders: false,
+		Folders:    []string{"lib-a", "lib-c"},
+	})
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(vollePolicy), &original); err != nil {
+		t.Fatalf("Testliteral kaputt: %v", err)
+	}
+	if len(*geschrieben) != len(original) {
+		t.Fatalf("%d Felder geschrieben, erwartet %d", len(*geschrieben), len(original))
+	}
+	verwaltet := map[string]bool{"IsDisabled": true, "EnableAllFolders": true, "EnabledFolders": true}
+	for name, wert := range original {
+		if verwaltet[name] {
+			continue
+		}
+		neu, da := (*geschrieben)[name]
+		if !da {
+			t.Errorf("Feld %s fehlt in der geschriebenen Policy", name)
+			continue
+		}
+		if kompakt(t, wert) != kompakt(t, neu) {
+			t.Errorf("Feld %s verändert: %s -> %s", name, kompakt(t, wert), kompakt(t, neu))
+		}
+	}
+}
+
+func TestUpdateAccessSchreibtDieDreiVerwaltetenFelder(t *testing.T) {
+	f := newFake(t)
+	geschrieben := policySchreiber(t, f, vollePolicy)
+
+	neu, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{
+		Disabled:   true,
+		AllFolders: true,
+		Folders:    []string{"lib-a", "lib-c"},
+	})
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if got := kompakt(t, (*geschrieben)["IsDisabled"]); got != "true" {
+		t.Errorf("IsDisabled = %s, erwartet true", got)
+	}
+	if got := kompakt(t, (*geschrieben)["EnableAllFolders"]); got != "true" {
+		t.Errorf("EnableAllFolders = %s, erwartet true", got)
+	}
+	// Die Einzelauswahl wird auch bei EnableAllFolders mitgeschrieben, damit
+	// sie beim Zurückschalten wieder dasteht (Spec §EnableAllFolders-Semantik).
+	if got := kompakt(t, (*geschrieben)["EnabledFolders"]); got != `["lib-a","lib-c"]` {
+		t.Errorf("EnabledFolders = %s", got)
+	}
+	if !neu.Disabled || !neu.AllFolders || len(neu.Folders) != 2 {
+		t.Errorf("Rückgabe = %+v, erwartet den geschriebenen Zustand", neu)
+	}
+}
+
+func TestUpdateAccessSchreibtLeereListeStattNull(t *testing.T) {
+	f := newFake(t)
+	geschrieben := policySchreiber(t, f, vollePolicy)
+
+	if _, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{}); err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if got := kompakt(t, (*geschrieben)["EnabledFolders"]); got != "[]" {
+		t.Errorf("EnabledFolders = %s, erwartet [] statt null", got)
+	}
+}
+
+func TestUpdateAccessReichtVerbotAlsDeutscheMeldungDurch(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"papa","Policy":`+vollePolicy+`}`)
+	f.reply("/Users/u-2/Policy", http.StatusForbidden, "Administrators cannot be disabled.")
+
+	_, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{Disabled: true})
+	if err == nil {
+		t.Fatal("Fehler erwartet")
+	}
+	var jfErr *jellyfin.Error
+	if !errors.As(err, &jfErr) {
+		t.Fatalf("err = %T, erwartet *jellyfin.Error", err)
+	}
+	if jfErr.Message != "Administratoren können nicht deaktiviert werden." {
+		t.Errorf("Message = %q", jfErr.Message)
+	}
+}
