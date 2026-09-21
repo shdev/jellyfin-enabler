@@ -48,6 +48,12 @@ Design, Makefile und Docker-Aufbau folgen dem Schwesterprojekt
 Benutzer anlegen oder löschen, Passwörter ändern, Sitzungen beenden. Dafür
 gibt es das Jellyfin-Dashboard.
 
+Wird ein bereits deaktivierter Benutzer in Jellyfin nachträglich zum
+Administrator gemacht, lässt er sich über diese Oberfläche nicht mehr
+bearbeiten — der Aktiv-Schalter ist dann gesperrt und steht auf "Aus",
+weshalb Jellyfin jedes Speichern ablehnt. Auflösen lässt sich das im
+Jellyfin-Dashboard.
+
 ## Sicherheitshinweis
 
 Wer die Oberfläche erreicht und ein Admin-Passwort hat, kann Zugänge

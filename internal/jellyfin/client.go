@@ -274,5 +274,9 @@ func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Acces
 	if err := c.do(ctx, http.MethodPost, path, token, "", r.Policy, nil); err != nil {
 		return Access{}, err
 	}
+	// Jellyfin antwortet auf das Schreiben mit 204 ohne Rumpf. Der
+	// Rückgabewert ist deshalb der geschriebene, nicht ein nachgelesener
+	// Stand — ein Nachlesen kostete einen zusätzlichen Request, den dieser
+	// Entwurf bewusst vermeidet.
 	return Access{Disabled: a.Disabled, AllFolders: a.AllFolders, Folders: folders}, nil
 }
