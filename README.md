@@ -8,6 +8,13 @@ Geprüft gegen **Jellyfin 10.11.0**.
 
 ## Betrieb
 
+**Vor dem ersten Start** `JELLYFIN_URL` in `docker-compose.yml` auf die eigene
+Instanz setzen. Der mitgelieferte Wert `http://jellyfin:8096` ist nur
+auflösbar, wenn Jellyfin im selben Docker-Netz läuft — sonst startet der
+Dienst zwar und meldet sich als gesund, aber jede Anmeldung schlägt fehl.
+Läuft Jellyfin in einem eigenen Compose-Projekt, zusätzlich dessen Netz
+eintragen; beide Stellen sind in `docker-compose.yml` kommentiert.
+
 ```bash
 docker compose up -d --build
 ```
