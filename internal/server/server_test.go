@@ -31,7 +31,11 @@ type fakeJF struct {
 	written   jellyfin.Access
 	writtenID string
 	updateErr error
-	loggedOut []string
+	// writtenBack erzwingt eine Bestätigung, die von der Anfrage abweicht.
+	// Sonst könnte kein Test belegen, dass die Antwort den bestätigten
+	// Stand trägt und nicht bloß die Anfrage zurückspiegelt.
+	writtenBack *jellyfin.Access
+	loggedOut   []string
 }
 
 func (f *fakeJF) Authenticate(_ context.Context, _, _ string) (jellyfin.Session, error) {
@@ -54,6 +58,9 @@ func (f *fakeJF) UpdateAccess(_ context.Context, _, userID string, a jellyfin.Ac
 	f.writtenID, f.written = userID, a
 	if f.updateErr != nil {
 		return jellyfin.Access{}, f.updateErr
+	}
+	if f.writtenBack != nil {
+		return *f.writtenBack, nil
 	}
 	return a, nil
 }
@@ -655,7 +662,8 @@ func TestSpeichernSchreibtUndAntwortetMitBestaetigtemStand(t *testing.T) {
 	h, jf, store := aufbau(t)
 	jf.libs = beispielBibliotheken()
 
-	rec := speichern(t, h, angemeldet(t, store), "u-2",
+	c := angemeldet(t, store)
+	rec := speichern(t, h, c, "u-2",
 		`{"disabled": true, "allFolders": false, "folders": ["lib-a"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Code = %d, Rumpf %s", rec.Code, rec.Body.String())
@@ -682,6 +690,9 @@ func TestSpeichernSchreibtUndAntwortetMitBestaetigtemStand(t *testing.T) {
 	}
 	if antwort.AllFolders {
 		t.Errorf("antwort.AllFolders = %v, erwartet false", antwort.AllFolders)
+	}
+	if _, ok := store.Get(c.Value); !ok {
+		t.Error("eine erfolgreiche Speicherung darf die Sitzung nicht verwerfen")
 	}
 }
 
@@ -736,12 +747,16 @@ func TestSpeichernReichtVerbotDurch(t *testing.T) {
 		Body:    "Administrators cannot be disabled.",
 	}
 
-	rec := speichern(t, h, angemeldet(t, store), "u-1", `{"disabled": true, "allFolders": true, "folders": []}`)
+	c := angemeldet(t, store)
+	rec := speichern(t, h, c, "u-1", `{"disabled": true, "allFolders": true, "folders": []}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Code = %d, erwartet 403", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "Administratoren können nicht deaktiviert werden.") {
 		t.Errorf("Rumpf = %s", rec.Body.String())
+	}
+	if _, ok := store.Get(c.Value); !ok {
+		t.Error("eine Ablehnung durch Jellyfin ist kein Grund, die Sitzung zu verwerfen")
 	}
 }
 
@@ -768,5 +783,51 @@ func TestSpeichernBeiJellyfinAusfallGibt502(t *testing.T) {
 	rec := speichern(t, h, angemeldet(t, store), "u-2", `{"disabled": false, "allFolders": false, "folders": []}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("Code = %d, erwartet 502", rec.Code)
+	}
+}
+
+// Jellyfin darf den Stand abweichend bestätigen. Die Antwort muss dann
+// diesen bestätigten Stand tragen, nicht die Anfrage — sonst zeigte die
+// Oberfläche eine Änderung an, die der Server nie übernommen hat.
+func TestSpeichernAntwortetMitDemBestaetigtenStandNichtMitDerAnfrage(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libs = beispielBibliotheken()
+	jf.writtenBack = &jellyfin.Access{Disabled: false, AllFolders: true, Folders: []string{"lib-b"}}
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2",
+		`{"disabled": true, "allFolders": false, "folders": ["lib-a"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Code = %d, Rumpf %s", rec.Code, rec.Body.String())
+	}
+	var antwort struct {
+		Disabled   bool     `json:"disabled"`
+		AllFolders bool     `json:"allFolders"`
+		Folders    []string `json:"folders"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &antwort); err != nil {
+		t.Fatalf("Antwort nicht lesbar: %v", err)
+	}
+	if antwort.Disabled {
+		t.Error("disabled stammt aus der Anfrage statt aus der Bestätigung")
+	}
+	if !antwort.AllFolders {
+		t.Error("allFolders stammt aus der Anfrage statt aus der Bestätigung")
+	}
+	if len(antwort.Folders) != 1 || antwort.Folders[0] != "lib-b" {
+		t.Errorf("Antwort-Ordner = %v, erwartet den bestätigten Stand [lib-b]", antwort.Folders)
+	}
+}
+
+func TestSpeichernBeiBibliotheksausfallSchreibtNichts(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.libsErr = errors.New("Verbindung abgelehnt")
+
+	rec := speichern(t, h, angemeldet(t, store), "u-2",
+		`{"disabled": false, "allFolders": false, "folders": []}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Code = %d, erwartet 502", rec.Code)
+	}
+	if jf.writtenID != "" {
+		t.Error("ohne die Bibliotheksliste darf nichts geschrieben werden")
 	}
 }
