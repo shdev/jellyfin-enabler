@@ -106,6 +106,23 @@ func TestFromEnvUeberschreibungen(t *testing.T) {
 	}
 }
 
+// TestFromEnvUnbekannterCookieSecureBleibtBeiAuto deckt einen Tippfehler wie
+// COOKIE_SECURE="ture" ab: der darf nicht lautlos irgendeinen anderen Wert
+// ergeben, sondern muss bei der Vorgabe "auto" bleiben (die Warnung selbst
+// wird hier nicht geprüft).
+func TestFromEnvUnbekannterCookieSecureBleibtBeiAuto(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{
+		"JELLYFIN_URL":  "http://jellyfin:8096",
+		"COOKIE_SECURE": "ture",
+	}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if cfg.CookieSecure != "auto" {
+		t.Errorf("CookieSecure = %q, erwartet auto", cfg.CookieSecure)
+	}
+}
+
 // Die Regel muss dieselbe sein wie in FromEnv — sonst lauscht der Dienst auf
 // der Vorgabe, während der Healthcheck einen unsinnigen Port abfragt.
 func TestPortFromEnvFaelltBeiUnsinnAufDieVorgabe(t *testing.T) {

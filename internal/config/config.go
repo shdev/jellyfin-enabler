@@ -4,6 +4,7 @@ package config
 
 import (
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -57,11 +58,19 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if d, err := time.ParseDuration(getenv("HTTP_TIMEOUT")); err == nil && d > 0 {
 		cfg.HTTPTimeout = d
 	}
-	switch strings.ToLower(getenv("COOKIE_SECURE")) {
+	roh := getenv("COOKIE_SECURE")
+	switch strings.ToLower(roh) {
 	case "true", "1", "yes":
 		cfg.CookieSecure = "true"
 	case "false", "0", "no":
 		cfg.CookieSecure = "false"
+	case "":
+		// Leer ist die Vorgabe und bleibt stillschweigend "auto".
+	default:
+		// Ein Tippfehler wie "ture" darf das Secure-Flag nicht lautlos
+		// abschalten — hinter einem TLS-Proxy ginge das Sitzungscookie
+		// sonst im Klartext über jeden Hop.
+		log.Printf("COOKIE_SECURE=%q wird nicht verstanden, es gilt die Vorgabe \"auto\".", roh)
 	}
 	return cfg, nil
 }
