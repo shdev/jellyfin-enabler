@@ -221,6 +221,33 @@ func TestLogoutEntwertetTokenUndLoeschtCookie(t *testing.T) {
 	}
 }
 
+// TestStatischeDateienWerdenAusgeliefert deckt die Naht zwischen
+// //go:embed, dem Mux-Muster "GET /static/" und http.FileServerFS ab. Der
+// Embed-Test in web/embed_test.go belegt nur, dass die Dateien in der
+// eingebetteten FS liegen — nicht, dass die Route sie auch ausliefert.
+// Ändert jemand das //go:embed-Muster oder das Mux-Muster, liefert die Route
+// still 404, die Oberfläche bleibt ungestaltet und der Speichern-Knopf tot,
+// ohne dass ein anderer Test das bemerkt — sichtbar würde es nur im Browser.
+func TestStatischeDateienWerdenAusgeliefert(t *testing.T) {
+	h, _, _ := aufbau(t)
+	for _, pfad := range []string{
+		"/static/app.css",
+		"/static/app.js",
+		"/static/icons/icon-192.png",
+		"/manifest.webmanifest",
+	} {
+		t.Run(pfad, func(t *testing.T) {
+			rec := holen(t, h, pfad, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("Code = %d, erwartet 200", rec.Code)
+			}
+			if rec.Body.Len() == 0 {
+				t.Error("Rumpf ist leer")
+			}
+		})
+	}
+}
+
 func TestNoStoreAufAllenAntworten(t *testing.T) {
 	h, _, _ := aufbau(t)
 	rec := httptest.NewRecorder()
