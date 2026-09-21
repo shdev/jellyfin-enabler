@@ -451,6 +451,58 @@ func TestUpdateAccessSchreibtLeereListeStattNull(t *testing.T) {
 	}
 }
 
+// TestUpdateAccessSchreibtNichtBeiAusgeduennterPolicy deckt den Fall ab, dass
+// Jellyfin (oder ein Reverse Proxy bei Teilausfall, oder eine geänderte
+// DTO-Form nach einem Upgrade) eine Policy ohne IsAdministrator liefert. Ohne
+// diese Prüfung schriebe der Dienst eine Policy aus drei Feldern zurück und
+// nähme dem Benutzer stillschweigend alle übrigen Rechte.
+func TestUpdateAccessSchreibtNichtBeiAusgeduennterPolicy(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"kind1","Policy":{"IsDisabled": false}}`)
+
+	_, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{Disabled: true})
+	if err == nil {
+		t.Fatal("Fehler erwartet")
+	}
+	var jfErr *jellyfin.Error
+	if !errors.As(err, &jfErr) {
+		t.Fatalf("err = %T, erwartet *jellyfin.Error", err)
+	}
+	if jfErr.Status != http.StatusBadGateway {
+		t.Errorf("Status = %d, erwartet 502", jfErr.Status)
+	}
+	for i := 0; i < f.callCount(); i++ {
+		if c := f.call(i); c.Method == http.MethodPost && strings.Contains(c.Path, "/Policy") {
+			t.Errorf("Aufruf %d ist ein POST auf %s — es hätte nichts geschrieben werden dürfen", i, c.Path)
+		}
+	}
+}
+
+// TestUpdateAccessSchreibtNichtBeiLeererPolicy ist das Gegenstück mit einer
+// vollständig leeren Policy — z. B. ein "{}" von einem Reverse Proxy bei
+// Teilausfall.
+func TestUpdateAccessSchreibtNichtBeiLeererPolicy(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"kind1","Policy":{}}`)
+
+	_, err := f.client().UpdateAccess(context.Background(), "tok", "u-2", jellyfin.Access{Disabled: true})
+	if err == nil {
+		t.Fatal("Fehler erwartet")
+	}
+	var jfErr *jellyfin.Error
+	if !errors.As(err, &jfErr) {
+		t.Fatalf("err = %T, erwartet *jellyfin.Error", err)
+	}
+	if jfErr.Status != http.StatusBadGateway {
+		t.Errorf("Status = %d, erwartet 502", jfErr.Status)
+	}
+	for i := 0; i < f.callCount(); i++ {
+		if c := f.call(i); c.Method == http.MethodPost && strings.Contains(c.Path, "/Policy") {
+			t.Errorf("Aufruf %d ist ein POST auf %s — es hätte nichts geschrieben werden dürfen", i, c.Path)
+		}
+	}
+}
+
 func TestUpdateAccessReichtVerbotAlsDeutscheMeldungDurch(t *testing.T) {
 	f := newFake(t)
 	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"papa","Policy":`+vollePolicy+`}`)

@@ -229,8 +229,19 @@ func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Acces
 	if err != nil {
 		return Access{}, err
 	}
-	if r.Policy == nil {
-		return Access{}, fmt.Errorf("jellyfin: Benutzer %s hat keine Policy", userID)
+	// Die Policy wird vollständig ersetzt. Bevor das passiert, muss
+	// plausibel sein, dass wir wirklich eine vollständige Policy gelesen
+	// haben — sonst schriebe ein ausgedünnter Rumpf (Reverse Proxy bei
+	// Teilausfall, geänderte DTO-Form nach einem Upgrade) eine Policy aus
+	// drei Feldern zurück und nähme dem Benutzer stillschweigend
+	// Transcoding-Rechte, Zeitfenster und Altersfreigabe.
+	// IsAdministrator liefert Jellyfin immer und dieser Dienst schreibt es nie.
+	if _, ok := r.Policy["IsAdministrator"]; !ok {
+		return Access{}, &Error{
+			Status:  http.StatusBadGateway,
+			Message: "Jellyfin hat eine unvollständige Policy geliefert. Es wurde nichts geändert.",
+			Body:    fmt.Sprintf("Policy von %s ohne IsAdministrator, %d Felder", userID, len(r.Policy)),
+		}
 	}
 	// Jellyfin erwartet eine Liste, kein null.
 	folders := a.Folders
