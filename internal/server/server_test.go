@@ -384,6 +384,29 @@ func TestListeBeiJellyfinAusfallGibt502(t *testing.T) {
 	}
 }
 
+// TestListeBeiJellyfinFehlerZeigtDessenMeldung stellt sicher, dass eine
+// konkrete Fehlermeldung von Jellyfin (z. B. eine unvollständige Policy)
+// tatsächlich im Rumpf steht — nicht der feste Rückfalltext, der bei jedem
+// Ausfall gleich lautet und niemanden auf die wahre Ursache brächte.
+func TestListeBeiJellyfinFehlerZeigtDessenMeldung(t *testing.T) {
+	h, jf, store := aufbau(t)
+	jf.usersErr = &jellyfin.Error{
+		Status:  http.StatusBadGateway,
+		Message: "Jellyfin hat eine unvollständige Policy geliefert. Es wurde nichts geändert.",
+	}
+
+	rec := holen(t, h, "/", angemeldet(t, store))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Code = %d, erwartet 502", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Jellyfin hat eine unvollständige Policy geliefert. Es wurde nichts geändert.") {
+		t.Errorf("Rumpf = %q, erwartet die konkrete Jellyfin-Meldung statt des Rückfalltexts", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Jellyfin ist gerade nicht erreichbar.") {
+		t.Error("der feste Rückfalltext darf eine konkrete Meldung nicht verdecken")
+	}
+}
+
 // kartenAusschnitt liefert den HTML-Ausschnitt der Karte eines Benutzers.
 // Nötig, weil eine Teilstring-Prüfung über die ganze Seite nicht bemerkt,
 // wenn Status und Markierung beim falschen Benutzer landen.

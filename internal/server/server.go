@@ -269,6 +269,12 @@ func (s *Server) seitenFehler(w http.ResponseWriter, r *http.Request, err error)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	var jfErr *jellyfin.Error
+	if errors.As(err, &jfErr) {
+		log.Printf("Jellyfin hat abgelehnt: %v", jfErr)
+		http.Error(w, jfErr.Message, jfErr.Status)
+		return
+	}
 	log.Printf("Jellyfin nicht erreichbar: %v", err)
 	http.Error(w, "Jellyfin ist gerade nicht erreichbar.", http.StatusBadGateway)
 }
