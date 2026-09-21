@@ -1,0 +1,24 @@
+services:
+  jellyfin-enabler:
+    build: .
+    # NAS-Deployment ohne lokalen Build: "build: ." entfernen und stattdessen
+    # das veröffentlichte Image ziehen (amd64):
+    #   image: ghcr.io/shdev/jellyfin-enabler:latest
+    image: jellyfin-enabler-native
+    container_name: jellyfin-enabler
+    ports:
+      - "8081:8080"
+    environment:
+      JELLYFIN_URL: "http://jellyfin:8096"
+      # Hinter einem TLS-terminierenden Reverse Proxy nötig, sonst kommt das
+      # Sitzungscookie ohne Secure-Flag:
+      # COOKIE_SECURE: "true"
+      # SESSION_TTL: "12h"
+    restart: unless-stopped
+    # Läuft Jellyfin in einem eigenen Compose-Projekt, dessen Netz hier
+    # eintragen, damit der Hostname "jellyfin" auflösbar ist:
+    # networks:
+    #   - jellyfin_default
+# networks:
+#   jellyfin_default:
+#     external: true

@@ -1,0 +1,7 @@
+.git
+.remember
+.superpowers
+bin
+docs
+.dockerignore
+docker-compose.yml
