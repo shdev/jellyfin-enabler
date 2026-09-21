@@ -26,7 +26,7 @@ Danach erreichbar unter <http://localhost:8081>.
 | Variable | Vorgabe | Bedeutung |
 |---|---|---|
 | `JELLYFIN_URL` | — (Pflicht) | Basis-URL, z. B. `http://jellyfin:8096` |
-| `PORT` | `8080` | Port im Container |
+| `PORT` | `8080` | Port **im Container**. Wer ihn ändert, muss auch das Port-Mapping in `docker-compose.yml` anpassen — sonst ist der Dienst vom Host aus nicht mehr erreichbar, obwohl der Container gesund bleibt. |
 | `SESSION_TTL` | `12h` | Lebensdauer einer Anmeldung |
 | `COOKIE_SECURE` | `auto` | hinter TLS-Proxy auf `true` setzen |
 | `HTTP_TIMEOUT` | `15s` | Zeitlimit für Jellyfin-Aufrufe |
