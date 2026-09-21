@@ -105,3 +105,16 @@ func TestFromEnvUeberschreibungen(t *testing.T) {
 		})
 	}
 }
+
+// Die Regel muss dieselbe sein wie in FromEnv — sonst lauscht der Dienst auf
+// der Vorgabe, während der Healthcheck einen unsinnigen Port abfragt.
+func TestPortFromEnvFaelltBeiUnsinnAufDieVorgabe(t *testing.T) {
+	for _, roh := range []string{"", "abc", "0", "-1", " 8080", "8080x"} {
+		if got := config.PortFromEnv(func(string) string { return roh }); got != config.DefaultPort {
+			t.Errorf("PortFromEnv(%q) = %d, erwartet %d", roh, got, config.DefaultPort)
+		}
+	}
+	if got := config.PortFromEnv(func(string) string { return "9000" }); got != 9000 {
+		t.Errorf("PortFromEnv(\"9000\") = %d, erwartet 9000", got)
+	}
+}

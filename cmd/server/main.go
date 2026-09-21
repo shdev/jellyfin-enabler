@@ -27,7 +27,9 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "nur prüfen, ob der laufende Dienst antwortet, und beenden")
 	flag.Parse()
 	if *healthcheck {
-		os.Exit(pruefe(os.Getenv("PORT")))
+		// Denselben Weg wie der Dienst gehen, damit beide auf demselben
+		// Port landen — auch wenn PORT unsinnig gesetzt ist.
+		os.Exit(pruefe(config.PortFromEnv(os.Getenv)))
 	}
 
 	cfg, err := config.FromEnv(os.Getenv)
@@ -47,6 +49,10 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Shutdown schließt zuerst die Listener, erst danach wartet es auf die
+	// laufenden Requests. ListenAndServe kehrt deshalb sofort zurück — ohne
+	// dieses Signal liefe main aus, während noch bedient wird.
+	fertig := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		abschluss, abbrechen := context.WithTimeout(context.Background(), 10*time.Second)
@@ -54,28 +60,24 @@ func main() {
 		if err := srv.Shutdown(abschluss); err != nil {
 			log.Printf("Herunterfahren: %v", err)
 		}
+		close(fertig)
 	}()
 
 	log.Printf("Jellyfin Enabler %s lauscht auf :%d, Jellyfin unter %s", version, cfg.Port, cfg.JellyfinURL)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Server beendet: %v", err)
 	}
+	<-fertig
 }
 
-// healthURL baut die Adresse des eigenen /healthz. Ohne Portangabe muss
-// dieselbe Vorgabe gelten wie in der Konfiguration — läuft das auseinander,
-// fragt der Healthcheck im Container stillschweigend den falschen Port ab
-// und der Container gilt dauerhaft als ungesund.
-func healthURL(port string) string {
-	if port == "" {
-		return fmt.Sprintf("http://127.0.0.1:%d/healthz", config.DefaultPort)
-	}
-	return "http://127.0.0.1:" + port + "/healthz"
+// healthURL baut die Adresse des eigenen /healthz.
+func healthURL(port int) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
 }
 
 // pruefe ist der Docker-Healthcheck: ein GET auf /healthz des eigenen
 // Prozesses. Rückgabe 0 heißt gesund.
-func pruefe(port string) int {
+func pruefe(port int) int {
 	c := &http.Client{Timeout: 3 * time.Second}
 	resp, err := c.Get(healthURL(port))
 	if err != nil {

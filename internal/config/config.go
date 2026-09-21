@@ -24,13 +24,24 @@ type Config struct {
 // damit der Healthcheck in cmd/server denselben Wert verwendet.
 const DefaultPort = 8080
 
+// PortFromEnv löst PORT nach derselben Regel auf wie FromEnv: alles, was
+// keine positive Zahl ist, fällt auf DefaultPort zurück. Exportiert, damit
+// der Healthcheck in cmd/server denselben Port trifft, auf dem der Dienst
+// tatsächlich lauscht — sonst gilt der Container bei einem unsinnigen PORT
+// dauerhaft als ungesund, obwohl er läuft.
+func PortFromEnv(getenv func(string) string) int {
+	if n, err := strconv.Atoi(getenv("PORT")); err == nil && n > 0 {
+		return n
+	}
+	return DefaultPort
+}
+
 // ErrNoJellyfinURL meldet die fehlende Pflichtvariable. Der Dienst startet
 // ohne sie nicht, statt später bei jedem Aufruf ins Leere zu laufen.
 var ErrNoJellyfinURL = errors.New("JELLYFIN_URL fehlt: Basis-URL des Jellyfin-Servers, z. B. http://jellyfin:8096")
 
 func FromEnv(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Port:         DefaultPort,
 		SessionTTL:   12 * time.Hour,
 		CookieSecure: "auto",
 		HTTPTimeout:  15 * time.Second,
@@ -39,9 +50,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if cfg.JellyfinURL == "" {
 		return Config{}, ErrNoJellyfinURL
 	}
-	if n, err := strconv.Atoi(getenv("PORT")); err == nil && n > 0 {
-		cfg.Port = n
-	}
+	cfg.Port = PortFromEnv(getenv)
 	if d, err := time.ParseDuration(getenv("SESSION_TTL")); err == nil && d > 0 {
 		cfg.SessionTTL = d
 	}
