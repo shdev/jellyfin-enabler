@@ -239,6 +239,13 @@
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
+  /* Administratoren lassen sich in Jellyfin nicht deaktivieren; der
+     Schalter ist deshalb gesperrt und soll auch so aussehen
+     (Spec §Fehlerbehandlung). */
+  .seg input:disabled + .seg-label {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
   .chip {
     @apply inline-flex cursor-pointer items-center rounded-full border border-edge-strong px-3 py-1 text-[12.5px] font-medium text-muted select-none;
   }
