@@ -20,13 +20,17 @@ type Config struct {
 	HTTPTimeout  time.Duration
 }
 
+// DefaultPort ist der Port, auf dem der Dienst ohne PORT lauscht. Exportiert,
+// damit der Healthcheck in cmd/server denselben Wert verwendet.
+const DefaultPort = 8080
+
 // ErrNoJellyfinURL meldet die fehlende Pflichtvariable. Der Dienst startet
 // ohne sie nicht, statt später bei jedem Aufruf ins Leere zu laufen.
 var ErrNoJellyfinURL = errors.New("JELLYFIN_URL fehlt: Basis-URL des Jellyfin-Servers, z. B. http://jellyfin:8096")
 
 func FromEnv(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Port:         8080,
+		Port:         DefaultPort,
 		SessionTTL:   12 * time.Hour,
 		CookieSecure: "auto",
 		HTTPTimeout:  15 * time.Second,
