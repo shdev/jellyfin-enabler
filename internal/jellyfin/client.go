@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -115,8 +116,12 @@ func (c *Client) Authenticate(ctx context.Context, username, password string) (S
 		return Session{}, err
 	}
 	if !res.User.Policy.IsAdministrator {
-		// Kein verwaistes Token zurücklassen; Fehler dabei sind nachrangig.
-		_ = c.Logout(ctx, res.AccessToken)
+		// Kein verwaistes Token zurücklassen. Scheitert das, bleibt ein
+		// gültiges Admin-fremdes Token bestehen, ohne dass es sonst irgendwo
+		// auffiele — deshalb wird ein Fehlschlag geloggt statt verworfen.
+		if err := c.Logout(ctx, res.AccessToken); err != nil {
+			log.Printf("Token eines abgelehnten Anmeldeversuchs konnte nicht entwertet werden: %v", err)
+		}
 		return Session{}, ErrNotAdmin
 	}
 	return Session{Token: res.AccessToken, UserID: res.User.ID, Name: res.User.Name}, nil
