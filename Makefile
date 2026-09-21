@@ -16,7 +16,7 @@ build:
 	CGO_ENABLED=0 go build -o $(BINARY) ./cmd/server
 
 test:
-	go test ./...
+	go test -race ./...
 
 check: fmt-check vet test
 
