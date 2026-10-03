@@ -19,6 +19,12 @@ type Config struct {
 	// Reverse Proxy ist "true" nötig (Spec §Authentifizierung und Sitzung).
 	CookieSecure string
 	HTTPTimeout  time.Duration
+	// APIKey ist der Jellyfin-API-Key für den Semiadmin-Pfad. Leer heißt:
+	// Semiadmin-Funktion aus (Spec §Konfiguration und Deployment). Er ist ein
+	// vollwertiger Admin-Zugang und darf deshalb nie geloggt werden.
+	APIKey string
+	// SettingsFile ist der Pfad der JSON-Datei mit den Semiadmin-Zuordnungen.
+	SettingsFile string
 }
 
 // DefaultPort ist der Port, auf dem der Dienst ohne PORT lauscht. Exportiert,
@@ -46,10 +52,18 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		SessionTTL:   12 * time.Hour,
 		CookieSecure: "auto",
 		HTTPTimeout:  15 * time.Second,
+		SettingsFile: "/data/settings.json",
 	}
 	cfg.JellyfinURL = strings.TrimRight(strings.TrimSpace(getenv("JELLYFIN_URL")), "/")
 	if cfg.JellyfinURL == "" {
 		return Config{}, ErrNoJellyfinURL
+	}
+	// Getrimmt wie JELLYFIN_URL: ein Zeilenende aus einer .env gehört nicht
+	// zum Key. Anführungszeichen bleiben stehen — ein so verfälschter Key
+	// fällt bei der Startprüfung in cmd/server als Warnung auf.
+	cfg.APIKey = strings.TrimSpace(getenv("JELLYFIN_API_KEY"))
+	if f := strings.TrimSpace(getenv("SETTINGS_FILE")); f != "" {
+		cfg.SettingsFile = f
 	}
 	cfg.Port = PortFromEnv(getenv)
 	if d, err := time.ParseDuration(getenv("SESSION_TTL")); err == nil && d > 0 {

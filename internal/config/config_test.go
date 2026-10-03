@@ -135,3 +135,51 @@ func TestPortFromEnvFaelltBeiUnsinnAufDieVorgabe(t *testing.T) {
 		t.Errorf("PortFromEnv(\"9000\") = %d, erwartet 9000", got)
 	}
 }
+
+func TestFromEnvSemiadminVorgaben(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{"JELLYFIN_URL": "http://jellyfin:8096"}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	// Leer heißt: Semiadmin-Funktion aus, Verhalten wie bisher.
+	if cfg.APIKey != "" {
+		t.Errorf("APIKey = %q, erwartet leer", cfg.APIKey)
+	}
+	if cfg.SettingsFile != "/data/settings.json" {
+		t.Errorf("SettingsFile = %q, erwartet /data/settings.json", cfg.SettingsFile)
+	}
+}
+
+// Ein API-Key aus einer .env mit Windows-Zeilenenden oder mit Leerraum aus
+// der Compose-Datei darf nicht samt Leerraum an Jellyfin gehen — sonst
+// scheitert jeder Semiadmin-Aufruf mit 401, ohne dass man den Grund sieht.
+func TestFromEnvSemiadminWerteWerdenGetrimmt(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{
+		"JELLYFIN_URL":     "http://jellyfin:8096",
+		"JELLYFIN_API_KEY": "  key-123\r\n",
+		"SETTINGS_FILE":    " ./data/settings.json ",
+	}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if cfg.APIKey != "key-123" {
+		t.Errorf("APIKey = %q, erwartet key-123", cfg.APIKey)
+	}
+	if cfg.SettingsFile != "./data/settings.json" {
+		t.Errorf("SettingsFile = %q, erwartet ./data/settings.json", cfg.SettingsFile)
+	}
+}
+
+// Ein SETTINGS_FILE aus reinem Leerraum ist ein Versehen, kein Pfad.
+func TestFromEnvLeererSettingsPfadBleibtBeiDerVorgabe(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{
+		"JELLYFIN_URL":  "http://jellyfin:8096",
+		"SETTINGS_FILE": "   ",
+	}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if cfg.SettingsFile != "/data/settings.json" {
+		t.Errorf("SettingsFile = %q, erwartet /data/settings.json", cfg.SettingsFile)
+	}
+}
