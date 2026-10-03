@@ -25,6 +25,11 @@ type Config struct {
 	APIKey string
 	// SettingsFile ist der Pfad der JSON-Datei mit den Semiadmin-Zuordnungen.
 	SettingsFile string
+	// PublicURL ist die Adresse, unter der die Oberfläche von außen erreichbar
+	// ist, ohne abschließenden Schrägstrich. Leer heißt: die Startmeldung nennt
+	// http://localhost:<Port>/. Nötig, sobald Port-Mapping oder ein Reverse
+	// Proxy die Adresse ändern.
+	PublicURL string
 }
 
 // DefaultPort ist der Port, auf dem der Dienst ohne PORT lauscht. Exportiert,
@@ -62,6 +67,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	// zum Key. Anführungszeichen bleiben stehen — ein so verfälschter Key
 	// fällt bei der Startprüfung in cmd/server als Warnung auf.
 	cfg.APIKey = strings.TrimSpace(getenv("JELLYFIN_API_KEY"))
+	cfg.PublicURL = strings.TrimRight(strings.TrimSpace(getenv("PUBLIC_URL")), "/")
 	if f := strings.TrimSpace(getenv("SETTINGS_FILE")); f != "" {
 		cfg.SettingsFile = f
 	}

@@ -17,6 +17,10 @@ services:
       # schreiben: der Schlüssel ist ein vollwertiger Admin-Zugang. Leer
       # schaltet die Semiadmin-Funktion aus.
       JELLYFIN_API_KEY: "${JELLYFIN_API_KEY:-}"
+      # Adresse, die der Dienst beim Start als anklickbare URL ins Log
+      # schreibt. Muss zum Host-Port oben passen; hinter einem Reverse Proxy
+      # die öffentliche Adresse eintragen.
+      PUBLIC_URL: "http://localhost:8081"
       # Hinter einem TLS-terminierenden Reverse Proxy nötig, sonst kommt das
       # Sitzungscookie ohne Secure-Flag:
       # COOKIE_SECURE: "true"

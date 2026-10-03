@@ -77,6 +77,7 @@ func main() {
 	}()
 
 	log.Printf("Jellyfin Enabler %s lauscht auf :%d, Jellyfin unter %s", version, cfg.Port, cfg.JellyfinURL)
+	log.Printf("Oberfläche: %s", oberflaecheURL(cfg.PublicURL, cfg.Port))
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Server beendet: %v", err)
 	}
@@ -117,4 +118,14 @@ func pruefeAPIKey(ctx context.Context, jf *jellyfin.Client, key string) {
 	if _, err := jf.Users(ctx, key); err != nil {
 		log.Printf("JELLYFIN_API_KEY konnte nicht geprüft werden: %v", err)
 	}
+}
+
+// oberflaecheURL liefert die Adresse für die Startmeldung: PUBLIC_URL, falls
+// gesetzt, sonst localhost mit dem Port, auf dem der Dienst lauscht. Die URL
+// steht am Zeilenende, damit Terminals sie anklickbar machen.
+func oberflaecheURL(publicURL string, port int) string {
+	if publicURL != "" {
+		return publicURL + "/"
+	}
+	return fmt.Sprintf("http://localhost:%d/", port)
 }

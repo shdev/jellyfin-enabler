@@ -183,3 +183,26 @@ func TestFromEnvLeererSettingsPfadBleibtBeiDerVorgabe(t *testing.T) {
 		t.Errorf("SettingsFile = %q, erwartet /data/settings.json", cfg.SettingsFile)
 	}
 }
+
+func TestFromEnvPublicURLVorgabeIstLeer(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{"JELLYFIN_URL": "http://jellyfin:8096"}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if cfg.PublicURL != "" {
+		t.Errorf("PublicURL = %q, erwartet leer", cfg.PublicURL)
+	}
+}
+
+func TestFromEnvPublicURLWirdGetrimmt(t *testing.T) {
+	cfg, err := config.FromEnv(env(map[string]string{
+		"JELLYFIN_URL": "http://jellyfin:8096",
+		"PUBLIC_URL":   "  https://enabler.example.org/  ",
+	}))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if cfg.PublicURL != "https://enabler.example.org" {
+		t.Errorf("PublicURL = %q, erwartet https://enabler.example.org", cfg.PublicURL)
+	}
+}

@@ -33,6 +33,7 @@ Danach erreichbar unter <http://localhost:8081>.
 | `HTTP_TIMEOUT` | `15s` | Zeitlimit für Jellyfin-Aufrufe |
 | `JELLYFIN_API_KEY` | leer | Jellyfin-API-Schlüssel für Semiadmins; leer schaltet die Funktion aus. Gehört in `.env`, nicht in `docker-compose.yml` |
 | `SETTINGS_FILE` | `/data/settings.json` | Pfad der Settings-Datei mit den Semiadmin-Zuordnungen |
+| `PUBLIC_URL` | leer | Adresse der Oberfläche für die Startmeldung im Log. Leer heißt `http://localhost:<PORT>/`; bei Port-Mapping oder Reverse Proxy die von außen erreichbare Adresse eintragen |
 
 ## Semiadmins
 

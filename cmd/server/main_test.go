@@ -42,3 +42,22 @@ func TestHealthURLBautDieAdresse(t *testing.T) {
 		t.Errorf("healthURL(9000) = %q", got)
 	}
 }
+
+func TestOberflaecheURL(t *testing.T) {
+	faelle := []struct {
+		name      string
+		publicURL string
+		port      int
+		want      string
+	}{
+		{"ohne PUBLIC_URL gilt localhost mit dem Port", "", 8081, "http://localhost:8081/"},
+		{"PUBLIC_URL hat Vorrang vor dem Port", "https://enabler.example.org", 8080, "https://enabler.example.org/"},
+	}
+	for _, f := range faelle {
+		t.Run(f.name, func(t *testing.T) {
+			if got := oberflaecheURL(f.publicURL, f.port); got != f.want {
+				t.Errorf("oberflaecheURL(%q, %d) = %q, erwartet %q", f.publicURL, f.port, got, f.want)
+			}
+		})
+	}
+}
