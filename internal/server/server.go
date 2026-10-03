@@ -741,6 +741,15 @@ func (s *Server) kandidatenFuellen(r *http.Request, sess session.Session, u jell
 	return nil
 }
 
+// sitzungBeenden löscht die Sitzung und antwortet auf eine Delegation eines
+// nicht mehr als Administrator geführten Kontos mit 403.
+func (s *Server) sitzungBeenden(w http.ResponseWriter, r *http.Request) {
+	if _, id, ok := s.aktuelleSitzung(r); ok {
+		s.sessions.Delete(id)
+	}
+	writeError(w, http.StatusForbidden, "Dieses Konto ist kein Administrator mehr.")
+}
+
 type delegationRequest struct {
 	Semiadmin bool     `json:"semiadmin"`
 	Users     []string `json:"users"`
@@ -761,6 +770,14 @@ func (s *Server) handleDelegation(w http.ResponseWriter, r *http.Request, sess s
 		return
 	}
 	users, err := s.jf.Users(r.Context(), sess.Token)
+	// Verweigert Jellyfin die Liste mit dem Token des Aufrufers, ist er kein
+	// Administrator mehr: wie "kein Administrator mehr" behandeln, statt die
+	// Sitzung bei der allgemeinen Fehlerbehandlung zu behalten.
+	var jfErr *jellyfin.Error
+	if errors.As(err, &jfErr) && jfErr.Status == http.StatusForbidden {
+		s.sitzungBeenden(w, r)
+		return
+	}
 	if err != nil {
 		s.apiFehler(w, r, err)
 		return
@@ -774,10 +791,7 @@ func (s *Server) handleDelegation(w http.ResponseWriter, r *http.Request, sess s
 	// schützt. Ein in Jellyfin inzwischen entmachteter Admin mit alter
 	// Sitzung dürfte sonst weiter Zuordnungen ändern.
 	if ich, ok := nachID[sess.UserID]; !ok || !ich.Admin {
-		if _, id, ok := s.aktuelleSitzung(r); ok {
-			s.sessions.Delete(id)
-		}
-		writeError(w, http.StatusForbidden, "Dieses Konto ist kein Administrator mehr.")
+		s.sitzungBeenden(w, r)
 		return
 	}
 	if s.apiKey == "" {

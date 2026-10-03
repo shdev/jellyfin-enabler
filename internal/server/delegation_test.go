@@ -353,3 +353,25 @@ func TestListeOhneKeyZeigtKeineSemiadminPille(t *testing.T) {
 		t.Errorf("ohne Key darf keine Pille erscheinen: %s", anna)
 	}
 }
+
+// Verweigert Jellyfin dem Aufrufer die Userliste mit 403, ist er kein
+// Administrator mehr: gleiche Behandlung wie "kein Administrator mehr".
+func TestDelegationJellyfin403BeiListeEntziehtSitzung(t *testing.T) {
+	h, jf, store, zuordnung := aufbauSemi(t)
+	jf.usersErr = &jellyfin.Error{Status: http.StatusForbidden, Message: "Jellyfin hat die Änderung abgelehnt."}
+	c := angemeldet(t, store)
+
+	rec := zuordnen(t, h, c, "u-3", `{"semiadmin": true, "users": []}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Code = %d, erwartet 403 (Rumpf %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Dieses Konto ist kein Administrator mehr.") {
+		t.Errorf("Rumpf = %s", rec.Body.String())
+	}
+	if _, ok := store.Get(c.Value); ok {
+		t.Error("die Sitzung muss gelöscht sein")
+	}
+	if n := len(zuordnung.Semiadmins()); n != 0 {
+		t.Errorf("%d Einträge gespeichert, erwartet keinen", n)
+	}
+}
