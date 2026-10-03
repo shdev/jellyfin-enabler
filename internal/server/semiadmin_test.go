@@ -345,3 +345,37 @@ func TestRollenmatrix(t *testing.T) {
 		})
 	}
 }
+
+// Bei einem Key-Fehler muss der Semiadmin sich abmelden können: GET /login
+// leitet bei bestehender Sitzung auf / zurück, ein Rohtext ohne Layout wäre
+// eine Sackgasse.
+func TestKeyFehlerAnsichtZeigtMeldungMitAbmelden(t *testing.T) {
+	h, jf, store, zuordnung := aufbauSemi(t)
+	jf.users = familie()
+	if err := zuordnung.Set("u-3", []string{"u-2"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	jf.usersErr = &jellyfin.Error{Status: http.StatusUnauthorized, Message: "Die Anmeldung ist abgelaufen."}
+	c := semiadminAngemeldet(t, store)
+
+	rec := holen(t, h, "/", c)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Code = %d, erwartet 502", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Interner Zugang nicht verfügbar. Bitte den Administrator informieren.") {
+		t.Errorf("Meldung fehlt: %s", body)
+	}
+	if !strings.Contains(body, `role="alert"`) {
+		t.Errorf("role=\"alert\" fehlt: %s", body)
+	}
+	if !strings.Contains(body, `action="/logout"`) {
+		t.Errorf("Abmelden-Formular fehlt: %s", body)
+	}
+	if strings.Contains(body, "Dir sind keine Benutzer zugewiesen.") {
+		t.Errorf("Leer-Text darf bei einem Fehler nicht erscheinen: %s", body)
+	}
+	if _, ok := store.Get(c.Value); !ok {
+		t.Error("ein Key-Fehler darf die Sitzung nicht löschen")
+	}
+}

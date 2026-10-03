@@ -401,6 +401,10 @@ type controlledRow struct {
 type controlledData struct {
 	Title string
 	Users []controlledRow
+	// Fehler ersetzt die Benutzerliste, wenn der Key-Aufruf scheitert: Der
+	// Semiadmin braucht das normale Layout samt Abmelden-Knopf, weil GET /login
+	// bei bestehender Sitzung auf / zurückleitet.
+	Fehler string
 }
 
 // errEntzogen meldet eine nicht bestandene Semiadmin-Prüfung. Die Sitzung
@@ -499,7 +503,10 @@ func (s *Server) handleControlled(w http.ResponseWriter, r *http.Request, sess s
 	}
 	if err != nil {
 		code, meldung := keyFehler(err)
-		http.Error(w, meldung, code)
+		w.WriteHeader(code)
+		if err := s.tmpl.ExecuteTemplate(w, "controlled", controlledData{Title: "Jellyfin Zugriff", Fehler: meldung}); err != nil {
+			log.Printf("Semiadmin-Ansicht nicht darstellbar: %v", err)
+		}
 		return
 	}
 	daten := controlledData{Title: "Jellyfin Zugriff"}

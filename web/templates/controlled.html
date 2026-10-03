@@ -5,6 +5,9 @@
         <button class="btn btn-ghost btn-sm" type="submit">Abmelden</button>
       </form>
     </header>
+    {{if .Fehler}}
+    <div class="card text-sm text-danger" role="alert">{{.Fehler}}</div>
+    {{else}}
     <h2 class="section-title mx-0.5 mb-2.5">Benutzer</h2>
     {{if .Users}}
     <div class="grid gap-2" id="controlled">
@@ -22,5 +25,6 @@
     </div>
     {{else}}
     <div class="card text-sm text-muted">Dir sind keine Benutzer zugewiesen.</div>
+    {{end}}
     {{end}}
 {{template "foot" .}}{{end}}
