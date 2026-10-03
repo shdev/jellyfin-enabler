@@ -521,8 +521,10 @@ func (s *Server) handleControlled(w http.ResponseWriter, r *http.Request, sess s
 	}
 }
 
+// Disabled ist ein Zeiger, damit ein fehlendes Feld auffällt: ein leerer Rumpf
+// darf nicht still als "aktivieren" gelten.
 type controlledRequest struct {
-	Disabled bool `json:"disabled"`
+	Disabled *bool `json:"disabled"`
 }
 
 type controlledResponse struct {
@@ -549,7 +551,7 @@ func (s *Server) handleControlledActive(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var req controlledRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil || req.Disabled == nil {
 		writeError(w, http.StatusBadRequest, "Die Anfrage war nicht lesbar.")
 		return
 	}
@@ -568,7 +570,7 @@ func (s *Server) handleControlledActive(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusForbidden, "Administratoren können nicht geschaltet werden.")
 		return
 	}
-	neu, err := s.jf.SetDisabled(r.Context(), s.apiKey, id, req.Disabled)
+	neu, err := s.jf.SetDisabled(r.Context(), s.apiKey, id, *req.Disabled)
 	if err != nil {
 		code, meldung := keyFehler(err)
 		writeError(w, code, meldung)

@@ -379,3 +379,30 @@ func TestKeyFehlerAnsichtZeigtMeldungMitAbmelden(t *testing.T) {
 		t.Error("ein Key-Fehler darf die Sitzung nicht löschen")
 	}
 }
+
+// Das Feld disabled ist Pflicht: ein leerer Rumpf darf nicht still als
+// "aktivieren" gelten.
+func TestSchaltenOhneFeldDisabledGibt400(t *testing.T) {
+	h, jf, store, zuordnung := aufbauSemi(t)
+	jf.users = familie()
+	if err := zuordnung.Set("u-3", []string{"u-2"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	c := semiadminAngemeldet(t, store)
+
+	rec := schalten(t, h, c, "u-2", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Code = %d, erwartet 400 (Rumpf %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Die Anfrage war nicht lesbar.") {
+		t.Errorf("Rumpf = %s", rec.Body.String())
+	}
+	if jf.setDisabled != nil {
+		t.Error("es darf nichts geschaltet werden")
+	}
+
+	rec = schalten(t, h, c, "u-2", `{"disabled":false}`)
+	if rec.Code != http.StatusOK || jf.setDisabled == nil || *jf.setDisabled {
+		t.Errorf("{\"disabled\":false} muss schalten: Code %d", rec.Code)
+	}
+}
