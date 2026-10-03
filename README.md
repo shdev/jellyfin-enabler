@@ -66,6 +66,20 @@ Schaltung eines Semiadmins steht im Log des Dienstes
 (`semiadmin schaltet: von=… ziel=… disabled=…`), weil Jellyfins
 Aktivitätslog bei Aufrufen mit API-Schlüssel keinen Benutzer nennt.
 
+Bei einem Bind-Mount nur das Verzeichnis mounten (z. B. `./data:/data`), nie
+die einzelne Datei: Der Dienst schreibt atomar über eine Temp-Datei und
+Umbenennen, das scheitert bei einer einzeln gemounteten Datei, und jedes
+Speichern endet mit einem Fehler.
+
+Bekannte Grenzen: Eine laufende Semiadmin-Sitzung wird nicht erneut gegen
+Jellyfin geprüft. Ein Passwortwechsel oder das Beenden der Sitzungen in
+Jellyfin beendet sie nicht; sie gilt bis zum Ablauf von `SESSION_TTL`. Sofort
+wirkt, den Semiadmin auszutragen oder sein Konto zu deaktivieren. Vor der
+Beförderung eines Semiadmins zum Jellyfin-Administrator die Semiadmin-Rolle
+entfernen: Bei Administratoren bietet die Oberfläche den Abschnitt nicht an;
+der Eintrag bleibt wirkungslos in der Datei und lebt wieder auf, wenn das
+Konto später zurückgestuft wird.
+
 ## Entwicklung
 
 ```bash
@@ -100,5 +114,6 @@ nicht ungeschützt ins Internet.
 `JELLYFIN_API_KEY` ist ein vollwertiger Admin-Zugang zu Jellyfin. Er gehört
 nur in `.env` (per `.gitignore` ausgeschlossen), nicht in
 `docker-compose.yml` und in kein Repository. Der Dienst loggt ihn nie und
-benutzt ihn ausschließlich für die Semiadmin-Ansicht und das Schalten. Ist er
+benutzt ihn für die Semiadmin-Ansicht und das Schalten sowie einmal beim
+Start zur Prüfung. Ist er
 abgeflossen: im Jellyfin-Dashboard widerrufen und einen neuen anlegen.

@@ -148,4 +148,4 @@ bin/
 
 # Lokale Geheimnisse (JELLYFIN_API_KEY) und Settings-Datei von `make run`
 .env
-data/
+/data/

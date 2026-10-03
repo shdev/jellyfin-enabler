@@ -245,7 +245,8 @@ Reihenfolge:
 
 - Das eigene Konto (`sess.UserID`) fehlt in der Userliste oder ist kein
   Administrator: 403, die Sitzung wird gelöscht (Begründung im Abschnitt
-  „Anmeldung, Sitzung und Rollen“).
+  „Anmeldung, Sitzung und Rollen“). Ebenso behandelt wird ein 403 von
+  Jellyfin auf den Listenaufruf mit dem Token des Admins.
 - API-Key nicht gesetzt: 409 „JELLYFIN_API_KEY ist nicht gesetzt.“
 - `{id}` unbekannt: 404.
 - `{id}` ist Administrator: 400.
@@ -265,6 +266,9 @@ Nur für Semiadmin-Sitzungen; eine Admin-Sitzung bekommt 403, Admins nutzen
 ```json
 { "disabled": true }
 ```
+
+Das Feld `disabled` ist Pflicht; fehlt es, antwortet der Dienst mit 400 und
+schaltet nichts.
 
 Prüfungen in dieser Reihenfolge:
 
@@ -334,6 +338,8 @@ Benutzer zugewiesen.“
   Key-Aufruf mit 401 oder 403, gibt der Dienst Status 502 mit der Meldung
   „Interner Zugang nicht verfügbar. Bitte den Administrator informieren.“
   zurück und loggt den Fehler. Die Sitzung des Semiadmins bleibt bestehen.
+  Die Semiadmin-Ansicht zeigt die Meldung im normalen Layout mit
+  Abmelden-Knopf.
   Alle anderen Fehler des Key-Aufrufs (Netzwerk, Timeout, 5xx) werden über die
   bestehende Fehlerabbildung des Clients (`*jellyfin.Error` mit deutscher
   Meldung) durchgereicht wie bei Aufrufen mit dem User-Token; auch dann bleibt
