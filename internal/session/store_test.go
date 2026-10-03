@@ -15,11 +15,11 @@ func bei(ttl time.Duration, jetzt *time.Time) *Store {
 
 func TestCreateLiefertUnterschiedlicheIDs(t *testing.T) {
 	s := NewStore(time.Hour)
-	a, err := s.Create("tok", "u-1", "papa")
+	a, err := s.Create("tok", "u-1", "papa", true)
 	if err != nil {
 		t.Fatalf("unerwarteter Fehler: %v", err)
 	}
-	b, err := s.Create("tok", "u-1", "papa")
+	b, err := s.Create("tok", "u-1", "papa", true)
 	if err != nil {
 		t.Fatalf("unerwarteter Fehler: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestCreateLiefertUnterschiedlicheIDs(t *testing.T) {
 
 func TestGetLiefertSitzung(t *testing.T) {
 	s := NewStore(time.Hour)
-	id, _ := s.Create("tok-123", "u-1", "papa")
+	id, _ := s.Create("tok-123", "u-1", "papa", true)
 
 	sess, ok := s.Get(id)
 	if !ok {
@@ -57,7 +57,7 @@ func TestGetUnbekanntesCookie(t *testing.T) {
 func TestGetNachAblauf(t *testing.T) {
 	jetzt := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	s := bei(time.Hour, &jetzt)
-	id, _ := s.Create("tok", "u-1", "papa")
+	id, _ := s.Create("tok", "u-1", "papa", true)
 
 	jetzt = jetzt.Add(59 * time.Minute)
 	if _, ok := s.Get(id); !ok {
@@ -71,7 +71,7 @@ func TestGetNachAblauf(t *testing.T) {
 
 func TestDeleteEntferntSitzung(t *testing.T) {
 	s := NewStore(time.Hour)
-	id, _ := s.Create("tok", "u-1", "papa")
+	id, _ := s.Create("tok", "u-1", "papa", true)
 	s.Delete(id)
 	if _, ok := s.Get(id); ok {
 		t.Error("gelöschte Sitzung darf nicht mehr gefunden werden")
@@ -82,9 +82,9 @@ func TestDeleteEntferntSitzung(t *testing.T) {
 func TestCleanupGibtSpeicherFrei(t *testing.T) {
 	jetzt := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	s := bei(time.Hour, &jetzt)
-	alt, _ := s.Create("tok", "u-1", "papa")
+	alt, _ := s.Create("tok", "u-1", "papa", true)
 	jetzt = jetzt.Add(2 * time.Hour)
-	neu, _ := s.Create("tok", "u-2", "mama")
+	neu, _ := s.Create("tok", "u-2", "mama", true)
 
 	s.Cleanup()
 
@@ -106,4 +106,25 @@ func TestStartCleanupEndetMitContext(t *testing.T) {
 	// Kein Test auf Zeitverhalten — es geht darum, dass der Aufruf nicht
 	// blockiert und der Context die Schleife beendet.
 	time.Sleep(5 * time.Millisecond)
+}
+
+// Die Rolle wird bei der Anmeldung festgelegt und mit der Sitzung gelesen;
+// danach entscheidet der Server allein anhand dieses Felds über die
+// Admin-Routen.
+func TestCreateMerktSichDieRolle(t *testing.T) {
+	s := NewStore(time.Hour)
+	admin, err := s.Create("tok", "u-1", "papa", true)
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	semi, err := s.Create("tok-anna", "u-3", "anna", false)
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if sess, _ := s.Get(admin); !sess.Admin {
+		t.Error("die Admin-Sitzung muss Admin=true tragen")
+	}
+	if sess, _ := s.Get(semi); sess.Admin {
+		t.Error("die Semiadmin-Sitzung darf nicht Admin=true tragen")
+	}
 }

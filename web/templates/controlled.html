@@ -1,0 +1,10 @@
+{{define "controlled"}}{{template "head" .}}
+    <header class="mb-6 flex items-center justify-between gap-3">
+      <h1 class="text-[17px] font-semibold tracking-tight">Jellyfin <span class="text-accent">Zugriff</span></h1>
+      <form method="post" action="/logout">
+        <button class="btn btn-ghost btn-sm" type="submit">Abmelden</button>
+      </form>
+    </header>
+    <h2 class="section-title mx-0.5 mb-2.5">Benutzer</h2>
+    <div class="card text-sm text-muted">Dir sind keine Benutzer zugewiesen.</div>
+{{template "foot" .}}{{end}}

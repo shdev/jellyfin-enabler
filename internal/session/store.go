@@ -12,11 +12,14 @@ import (
 )
 
 // Session ist eine angemeldete Sitzung am Dienst. Token ist das
-// Jellyfin-Zugriffstoken, mit dem alle Aufrufe laufen.
+// Jellyfin-Zugriffstoken des Benutzers. Admin ist die Rolle zum Zeitpunkt
+// der Anmeldung: true für Jellyfin-Administratoren, false für Semiadmins
+// (Spec §Anmeldung, Sitzung und Rollen).
 type Session struct {
 	Token   string
 	UserID  string
 	Name    string
+	Admin   bool
 	Expires time.Time
 }
 
@@ -36,7 +39,7 @@ func NewStore(ttl time.Duration) *Store {
 }
 
 // Create legt eine Sitzung an und liefert den Cookie-Wert.
-func (s *Store) Create(token, userID, name string) (string, error) {
+func (s *Store) Create(token, userID, name string, admin bool) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -48,6 +51,7 @@ func (s *Store) Create(token, userID, name string) (string, error) {
 		Token:   token,
 		UserID:  userID,
 		Name:    name,
+		Admin:   admin,
 		Expires: s.now().Add(s.ttl),
 	}
 	return id, nil

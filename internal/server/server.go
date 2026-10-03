@@ -13,6 +13,7 @@ import (
 
 	"jellyfinenabler/internal/jellyfin"
 	"jellyfinenabler/internal/session"
+	"jellyfinenabler/internal/settings"
 	"jellyfinenabler/web"
 )
 
@@ -35,14 +36,23 @@ type Server struct {
 	sessions     *session.Store
 	cookieSecure string
 	tmpl         *template.Template
+	// semiadmins hält die Zuordnung Semiadmin → schaltbare User.
+	semiadmins *settings.Store
+	// apiKey ist der Jellyfin-API-Key; leer heißt Semiadmin-Funktion aus.
+	// Er wird ausschließlich im Semiadmin-Pfad benutzt und nie ausgegeben.
+	apiKey string
 }
 
-func New(jf Jellyfin, sessions *session.Store, cookieSecure string) http.Handler {
+// New baut den Handler. semiadmins und apiKey stehen hinten, damit die
+// bisherigen Argumente ihre Reihenfolge behalten.
+func New(jf Jellyfin, sessions *session.Store, cookieSecure string, semiadmins *settings.Store, apiKey string) http.Handler {
 	s := &Server{
 		jf:           jf,
 		sessions:     sessions,
 		cookieSecure: cookieSecure,
 		tmpl:         template.Must(template.ParseFS(web.FS, "templates/*.html")),
+		semiadmins:   semiadmins,
+		apiKey:       apiKey,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -51,9 +61,9 @@ func New(jf Jellyfin, sessions *session.Store, cookieSecure string) http.Handler
 	mux.HandleFunc("GET /login", s.handleLoginPage)
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("POST /logout", s.handleLogout)
-	mux.HandleFunc("GET /{$}", s.seite(s.handleIndex))
-	mux.HandleFunc("GET /users/{id}", s.seite(s.handleUserPage))
-	mux.HandleFunc("PUT /api/users/{id}/access", s.api(s.handleUpdateAccess))
+	mux.HandleFunc("GET /{$}", s.seite(s.handleStart))
+	mux.HandleFunc("GET /users/{id}", s.seite(nurAdmin(s.handleUserPage, zurStartseite)))
+	mux.HandleFunc("PUT /api/users/{id}/access", s.api(nurAdmin(s.handleUpdateAccess, keinAdmin)))
 	return noStore(mux)
 }
 
@@ -116,6 +126,44 @@ func (s *Server) api(fn func(http.ResponseWriter, *http.Request, session.Session
 	}
 }
 
+// sitzungsFn ist ein Handler, dessen Sitzung bereits geprüft ist.
+type sitzungsFn = func(http.ResponseWriter, *http.Request, session.Session)
+
+// nurAdmin lässt nur Admin-Sitzungen durch. Bisher erzwang Jellyfin die
+// Adminrechte über das Token; ein Semiadmin hat aber ein gültiges Token,
+// also muss der Dienst das selbst tun (Spec §Anmeldung, Sitzung und Rollen).
+// abgelehnt antwortet passend zur Route.
+func nurAdmin(fn sitzungsFn, abgelehnt http.HandlerFunc) sitzungsFn {
+	return func(w http.ResponseWriter, r *http.Request, sess session.Session) {
+		if !sess.Admin {
+			abgelehnt(w, r)
+			return
+		}
+		fn(w, r, sess)
+	}
+}
+
+// zurStartseite ist die Ablehnung auf Seiten: dort wartet die eigene Ansicht.
+func zurStartseite(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// keinAdmin ist die Ablehnung in der API.
+func keinAdmin(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusForbidden, "Diese Aktion ist Administratoren vorbehalten.")
+}
+
+// semiadminEingetragen ist die Rollenprüfung beim Login: Key gesetzt und
+// Eintrag in der Settings-Datei. Ob das Konto in Jellyfin noch aktiv ist,
+// prüft die Semiadmin-Prüfung bei jeder weiteren Anfrage.
+func (s *Server) semiadminEingetragen(userID string) bool {
+	if s.apiKey == "" {
+		return false
+	}
+	_, ok := s.semiadmins.Targets(userID)
+	return ok
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -160,11 +208,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, http.StatusUnauthorized, "Anmeldung fehlgeschlagen.")
 		return
 	}
-	if !sess.Admin {
+	// Drei Fälle (Spec §Anmeldung, Sitzung und Rollen): Jellyfin-Admin,
+	// eingetragener Semiadmin bei gesetztem Key, sonst kein Zugang.
+	if !sess.Admin && !s.semiadminEingetragen(sess.UserID) {
 		s.abweisen(w, r, sess.Token)
 		return
 	}
-	id, err := s.sessions.Create(sess.Token, sess.UserID, sess.Name)
+	id, err := s.sessions.Create(sess.Token, sess.UserID, sess.Name, sess.Admin)
 	if err != nil {
 		log.Printf("Sitzung nicht anlegbar: %v", err)
 		s.renderLogin(w, http.StatusInternalServerError, "Die Sitzung konnte nicht angelegt werden.")
@@ -314,6 +364,37 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, sess sessio
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "users", daten); err != nil {
 		log.Printf("Benutzerliste nicht darstellbar: %v", err)
+	}
+}
+
+// handleStart verteilt nach Rolle: Admins sehen die Benutzerliste,
+// Semiadmins ihre eigene, schmale Ansicht (Spec §HTTP-Oberfläche).
+func (s *Server) handleStart(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	if sess.Admin {
+		s.handleIndex(w, r, sess)
+		return
+	}
+	s.handleControlled(w, r, sess)
+}
+
+// controlledRow ist eine Karte der Semiadmin-Ansicht: Name und Schalter,
+// keine Bibliotheken.
+type controlledRow struct {
+	ID       string
+	Name     string
+	Disabled bool
+}
+
+type controlledData struct {
+	Title string
+	Users []controlledRow
+}
+
+// handleControlled zeigt die Ansicht eines Semiadmins.
+func (s *Server) handleControlled(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	daten := controlledData{Title: "Jellyfin Zugriff"}
+	if err := s.tmpl.ExecuteTemplate(w, "controlled", daten); err != nil {
+		log.Printf("Semiadmin-Ansicht nicht darstellbar: %v", err)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"jellyfinenabler/internal/jellyfin"
 	"jellyfinenabler/internal/server"
 	"jellyfinenabler/internal/session"
+	"jellyfinenabler/internal/settings"
 )
 
 // version wird beim Build gesetzt: -ldflags "-X main.version=v1".
@@ -43,9 +44,21 @@ func main() {
 	sessions := session.NewStore(cfg.SessionTTL)
 	sessions.StartCleanup(ctx, 10*time.Minute)
 
+	// Auch ohne API-Key laden: ein vorhandener Stand bleibt erhalten, und ein
+	// Fehler in der Datei fällt sofort beim Start auf
+	// (Spec §Settings-Datei und Paket internal/settings).
+	semiadmins, err := settings.Load(cfg.SettingsFile)
+	if err != nil {
+		log.Fatalf("Settings-Datei: %v", err)
+	}
+	jf := jellyfin.New(cfg.JellyfinURL, cfg.HTTPTimeout, version)
+	// Nebenläufig, damit ein beim Start noch nicht erreichbares Jellyfin den
+	// Listener nicht um HTTP_TIMEOUT verzögert.
+	go pruefeAPIKey(ctx, jf, cfg.APIKey)
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(jellyfin.New(cfg.JellyfinURL, cfg.HTTPTimeout, version), sessions, cfg.CookieSecure),
+		Handler:           server.New(jf, sessions, cfg.CookieSecure, semiadmins, cfg.APIKey),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -90,4 +103,18 @@ func pruefe(port int) int {
 		return 1
 	}
 	return 0
+}
+
+// pruefeAPIKey meldet beim Start, ob der Semiadmin-Pfad benutzbar ist. Ein
+// Fehlschlag bricht nicht ab: Jellyfin ist beim Start oft noch nicht
+// erreichbar (Spec §Konfiguration und Deployment). Der Key selbst wird nie
+// geloggt; die Fehlermeldung des Clients enthält nur Status und Antworttext.
+func pruefeAPIKey(ctx context.Context, jf *jellyfin.Client, key string) {
+	if key == "" {
+		log.Print("Semiadmin-Funktion aus (JELLYFIN_API_KEY nicht gesetzt)")
+		return
+	}
+	if _, err := jf.Users(ctx, key); err != nil {
+		log.Printf("JELLYFIN_API_KEY konnte nicht geprüft werden: %v", err)
+	}
 }

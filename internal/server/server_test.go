@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"jellyfinenabler/internal/jellyfin"
 	"jellyfinenabler/internal/server"
 	"jellyfinenabler/internal/session"
+	"jellyfinenabler/internal/settings"
 )
 
 // fakeJF ersetzt den Jellyfin-Client. Die Handler-Tests sollen Routing,
@@ -80,31 +82,76 @@ func (f *fakeJF) SetDisabled(_ context.Context, token, userID string, disabled b
 	return disabled, nil
 }
 
-// aufbau liefert Handler, Fake und Sitzungsspeicher.
-func aufbau(t *testing.T) (http.Handler, *fakeJF, *session.Store) {
+// testKey ist der API-Key der Tests. Er darf in keiner Antwort und in
+// keinem Log auftauchen.
+const testKey = "key-123"
+
+// bauen ist der gemeinsame Kern aller Aufbau-Helfer: Handler, Fake,
+// Sitzungsspeicher und ein Settings-Store in einem frischen Testverzeichnis.
+func bauen(t *testing.T, cookieSecure, apiKey string) (http.Handler, *fakeJF, *session.Store, *settings.Store) {
 	t.Helper()
 	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa", Admin: true}}
 	store := session.NewStore(time.Hour)
-	return server.New(jf, store, "false"), jf, store
+	zuordnung, err := settings.Load(filepath.Join(t.TempDir(), "settings.json"))
+	if err != nil {
+		t.Fatalf("Settings nicht ladbar: %v", err)
+	}
+	return server.New(jf, store, cookieSecure, zuordnung, apiKey), jf, store, zuordnung
+}
+
+// aufbau liefert Handler, Fake und Sitzungsspeicher ohne API-Key, also mit
+// abgeschalteter Semiadmin-Funktion — das Verhalten wie vor den Semiadmins.
+func aufbau(t *testing.T) (http.Handler, *fakeJF, *session.Store) {
+	t.Helper()
+	h, jf, store, _ := bauen(t, "false", "")
+	return h, jf, store
 }
 
 // aufbauMit erlaubt es, die Secure-Entscheidung zu prüfen; aufbau bleibt
 // die knappe Variante für alle übrigen Tests.
 func aufbauMit(t *testing.T, cookieSecure string) (http.Handler, *fakeJF, *session.Store) {
 	t.Helper()
-	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa", Admin: true}}
-	store := session.NewStore(time.Hour)
-	return server.New(jf, store, cookieSecure), jf, store
+	h, jf, store, _ := bauen(t, cookieSecure, "")
+	return h, jf, store
 }
 
-// angemeldet legt eine Sitzung an und liefert das passende Cookie.
+// aufbauSemi baut mit gesetztem API-Key und liefert den Settings-Store mit,
+// damit Tests Semiadmins eintragen können.
+func aufbauSemi(t *testing.T) (http.Handler, *fakeJF, *session.Store, *settings.Store) {
+	t.Helper()
+	return bauen(t, "false", testKey)
+}
+
+// angemeldet legt eine Admin-Sitzung für papa (u-1) an.
 func angemeldet(t *testing.T, store *session.Store) *http.Cookie {
 	t.Helper()
-	id, err := store.Create("tok", "u-1", "papa")
+	id, err := store.Create("tok", "u-1", "papa", true)
 	if err != nil {
 		t.Fatalf("Sitzung nicht anlegbar: %v", err)
 	}
 	return &http.Cookie{Name: "jfe_session", Value: id}
+}
+
+// semiadminAngemeldet legt eine Semiadmin-Sitzung für anna (u-3) an.
+func semiadminAngemeldet(t *testing.T, store *session.Store) *http.Cookie {
+	t.Helper()
+	id, err := store.Create("tok-anna", "u-3", "anna", false)
+	if err != nil {
+		t.Fatalf("Sitzung nicht anlegbar: %v", err)
+	}
+	return &http.Cookie{Name: "jfe_session", Value: id}
+}
+
+// familie ist die Benutzerliste der Semiadmin-Tests: anna (u-3) ist die
+// Semiadmin, ben (u-4) und kind1 (u-2, deaktiviert) sind mögliche Ziele,
+// papa (u-1) ist Administrator. Sortiert nach Namen wie Users im Client.
+func familie() []jellyfin.User {
+	return []jellyfin.User{
+		{ID: "u-3", Name: "anna"},
+		{ID: "u-4", Name: "ben"},
+		{ID: "u-2", Name: "kind1", Access: jellyfin.Access{Disabled: true}},
+		{ID: "u-1", Name: "papa", Admin: true, Access: jellyfin.Access{AllFolders: true}},
+	}
 }
 
 func TestHealthzOhneAnmeldung(t *testing.T) {
