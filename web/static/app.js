@@ -192,3 +192,49 @@ async function senden(pfad, rumpf) {
 
   aktualisieren();
 })();
+
+// Semiadmin-Ansicht: jeder Schalter speichert sofort. Bei einem Fehler
+// springt er auf den letzten Stand zurück, ein Toast zeigt die Meldung.
+(function () {
+  const liste = document.getElementById("controlled");
+  if (!liste) return;
+
+  liste.addEventListener("change", async (ev) => {
+    const karte = ev.target.closest("[data-user-id]");
+    if (!karte) return;
+    const id = karte.dataset.userId;
+    const an = document.getElementById(`on-${id}`);
+    const aus = document.getElementById(`off-${id}`);
+    const disabled = aus.checked;
+    const zurueck = () => {
+      an.checked = disabled;
+      aus.checked = !disabled;
+    };
+    an.disabled = true;
+    aus.disabled = true;
+    try {
+      const r = await senden(
+        `/api/controlled/${encodeURIComponent(id)}/active`,
+        { disabled },
+      );
+      if (r.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!r.ok) {
+        zurueck();
+        toast(r.daten.error || "Schalten fehlgeschlagen.", "err");
+        return;
+      }
+      an.checked = !r.daten.disabled;
+      aus.checked = r.daten.disabled;
+      toast(r.daten.disabled ? "Deaktiviert." : "Aktiviert.", "ok");
+    } catch (err) {
+      zurueck();
+      toast("Der Dienst ist nicht erreichbar.", "err");
+    } finally {
+      an.disabled = false;
+      aus.disabled = false;
+    }
+  });
+})();

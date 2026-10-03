@@ -45,6 +45,8 @@ type fakeJF struct {
 	setID       string
 	setDisabled *bool
 	setErr      error
+	// usersTokens hält fest, mit welchem Token Users gerufen wurde.
+	usersTokens []string
 }
 
 func (f *fakeJF) Authenticate(_ context.Context, _, _ string) (jellyfin.Session, error) {
@@ -54,7 +56,8 @@ func (f *fakeJF) Logout(_ context.Context, token string) error {
 	f.loggedOut = append(f.loggedOut, token)
 	return f.logoutErr
 }
-func (f *fakeJF) Users(context.Context, string) ([]jellyfin.User, error) {
+func (f *fakeJF) Users(_ context.Context, token string) ([]jellyfin.User, error) {
+	f.usersTokens = append(f.usersTokens, token)
 	return f.users, f.usersErr
 }
 func (f *fakeJF) User(context.Context, string, string) (jellyfin.User, error) {

@@ -66,6 +66,7 @@ func New(jf Jellyfin, sessions *session.Store, cookieSecure string, semiadmins *
 	mux.HandleFunc("GET /users/{id}", s.seite(nurAdmin(s.handleUserPage, zurStartseite)))
 	mux.HandleFunc("PUT /api/users/{id}/access", s.api(nurAdmin(s.handleUpdateAccess, keinAdmin)))
 	mux.HandleFunc("PUT /api/users/{id}/delegation", s.api(nurAdmin(s.handleDelegation, keinAdmin)))
+	mux.HandleFunc("PUT /api/controlled/{id}/active", s.api(s.handleControlledActive))
 	return noStore(mux)
 }
 
@@ -402,12 +403,172 @@ type controlledData struct {
 	Users []controlledRow
 }
 
-// handleControlled zeigt die Ansicht eines Semiadmins.
+// errEntzogen meldet eine nicht bestandene Semiadmin-Prüfung. Die Sitzung
+// ist dann bereits gelöscht.
+var errEntzogen = errors.New("Semiadmin-Rolle entzogen")
+
+// semiadminLage ist das Ergebnis einer bestandenen Semiadmin-Prüfung. Die
+// Userliste ist per API-Key geladen; beide Semiadmin-Handler brauchen sie.
+type semiadminLage struct {
+	ich     jellyfin.User
+	users   []jellyfin.User
+	nachID  map[string]jellyfin.User
+	targets map[string]bool
+}
+
+// semiadminPruefen ist die Semiadmin-Prüfung (Spec §Anmeldung, Sitzung und
+// Rollen). Sie läuft bei jeder Semiadmin-Anfrage, damit ein inzwischen
+// gesperrter oder entmachteter Semiadmin mit seiner alten Sitzung nicht
+// weiter schalten kann. Nicht bestanden (errEntzogen) heißt: Key fehlt,
+// Eintrag fehlt, oder die per Key erfolgreich geladene Liste kennt das
+// Konto nicht oder nur deaktiviert. Scheitert der Key-Aufruf selbst, kommt
+// dessen Fehler zurück und die Sitzung bleibt bestehen.
+func (s *Server) semiadminPruefen(r *http.Request, sess session.Session) (semiadminLage, error) {
+	if s.apiKey == "" {
+		return semiadminLage{}, s.entziehen(r, sess)
+	}
+	targets, ok := s.semiadmins.Targets(sess.UserID)
+	if !ok {
+		return semiadminLage{}, s.entziehen(r, sess)
+	}
+	users, err := s.jf.Users(r.Context(), s.apiKey)
+	if err != nil {
+		return semiadminLage{}, err
+	}
+	lage := semiadminLage{
+		users:   users,
+		nachID:  make(map[string]jellyfin.User, len(users)),
+		targets: make(map[string]bool, len(targets)),
+	}
+	for _, u := range users {
+		lage.nachID[u.ID] = u
+	}
+	for _, id := range targets {
+		lage.targets[id] = true
+	}
+	ich, ok := lage.nachID[sess.UserID]
+	if !ok || ich.Access.Disabled {
+		return semiadminLage{}, s.entziehen(r, sess)
+	}
+	lage.ich = ich
+	return lage, nil
+}
+
+// entziehen löscht die Sitzung und entwertet das User-Token in Jellyfin.
+// Scheitert die Abmeldung, wird das nur geloggt.
+func (s *Server) entziehen(r *http.Request, sess session.Session) error {
+	if _, id, ok := s.aktuelleSitzung(r); ok {
+		s.sessions.Delete(id)
+	}
+	if err := s.jf.Logout(r.Context(), sess.Token); err != nil {
+		log.Printf("Token eines entzogenen Semiadmins konnte nicht entwertet werden: %v", err)
+	}
+	log.Printf("Semiadmin-Sitzung beendet: %s (%s)", sess.Name, sess.UserID)
+	return errEntzogen
+}
+
+// keyFehler übersetzt einen gescheiterten Aufruf mit dem API-Key in Status
+// und Meldung. Anders als bei Aufrufen mit dem User-Token wird die Sitzung
+// nie gelöscht: 401 oder 403 heißt hier, dass der Key ungültig oder
+// widerrufen ist, nicht dass die Anmeldung des Semiadmins abgelaufen ist
+// (Spec §Fehlerbehandlung).
+func keyFehler(err error) (int, string) {
+	var jfErr *jellyfin.Error
+	if errors.As(err, &jfErr) {
+		if jfErr.Status == http.StatusUnauthorized || jfErr.Status == http.StatusForbidden {
+			log.Printf("Jellyfin lehnt JELLYFIN_API_KEY ab: %v", jfErr)
+			return http.StatusBadGateway, "Interner Zugang nicht verfügbar. Bitte den Administrator informieren."
+		}
+		log.Printf("Jellyfin hat abgelehnt: %v", jfErr)
+		return jfErr.Status, jfErr.Message
+	}
+	log.Printf("Jellyfin nicht erreichbar: %v", err)
+	return http.StatusBadGateway, "Jellyfin ist gerade nicht erreichbar."
+}
+
+// handleControlled zeigt die Ansicht eines Semiadmins: je zugewiesenem
+// Nicht-Admin eine Karte mit Aktiv/Aus-Schalter, keine Bibliotheken, keine
+// Links auf Detailseiten. Verwaiste IDs, inzwischen zu Administratoren
+// gewordene Ziele und das eigene Konto (aus einer alten oder von Hand
+// bearbeiteten Datei) werden ausgefiltert.
 func (s *Server) handleControlled(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	lage, err := s.semiadminPruefen(r, sess)
+	if errors.Is(err, errEntzogen) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		code, meldung := keyFehler(err)
+		http.Error(w, meldung, code)
+		return
+	}
 	daten := controlledData{Title: "Jellyfin Zugriff"}
+	for _, u := range lage.users {
+		if !lage.targets[u.ID] || u.Admin || u.ID == sess.UserID {
+			continue
+		}
+		daten.Users = append(daten.Users, controlledRow{ID: u.ID, Name: u.Name, Disabled: u.Access.Disabled})
+	}
 	if err := s.tmpl.ExecuteTemplate(w, "controlled", daten); err != nil {
 		log.Printf("Semiadmin-Ansicht nicht darstellbar: %v", err)
 	}
+}
+
+type controlledRequest struct {
+	Disabled bool `json:"disabled"`
+}
+
+type controlledResponse struct {
+	Disabled bool `json:"disabled"`
+}
+
+// handleControlledActive schaltet einen zugewiesenen User
+// (Spec §PUT /api/controlled/{id}/active). Das ist der einzige schreibende
+// Aufruf mit dem API-Key; jede Schaltung landet im Log, weil Jellyfins
+// Aktivitätslog bei Key-Aufrufen keinen Benutzer nennt.
+func (s *Server) handleControlledActive(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	if sess.Admin {
+		writeError(w, http.StatusForbidden, "Diese Aktion ist Semiadmins vorbehalten.")
+		return
+	}
+	lage, err := s.semiadminPruefen(r, sess)
+	if errors.Is(err, errEntzogen) {
+		writeError(w, http.StatusUnauthorized, "Die Anmeldung ist abgelaufen.")
+		return
+	}
+	if err != nil {
+		code, meldung := keyFehler(err)
+		writeError(w, code, meldung)
+		return
+	}
+	var req controlledRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Die Anfrage war nicht lesbar.")
+		return
+	}
+	id := r.PathValue("id")
+	// Das eigene Konto ist nie ein Ziel, auch wenn es in der Datei steht.
+	if !lage.targets[id] || id == sess.UserID {
+		writeError(w, http.StatusForbidden, "Dieser Benutzer ist dir nicht zugewiesen.")
+		return
+	}
+	ziel, ok := lage.nachID[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Der Benutzer existiert nicht mehr.")
+		return
+	}
+	if ziel.Admin {
+		writeError(w, http.StatusForbidden, "Administratoren können nicht geschaltet werden.")
+		return
+	}
+	neu, err := s.jf.SetDisabled(r.Context(), s.apiKey, id, req.Disabled)
+	if err != nil {
+		code, meldung := keyFehler(err)
+		writeError(w, code, meldung)
+		return
+	}
+	log.Printf("semiadmin schaltet: von=%s (%s) ziel=%s (%s) disabled=%t", lage.ich.Name, sess.UserID, ziel.Name, ziel.ID, neu)
+	writeJSON(w, http.StatusOK, controlledResponse{Disabled: neu})
 }
 
 type libraryRow struct {
