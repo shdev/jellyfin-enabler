@@ -10,8 +10,28 @@ function toast(text, art = "ok") {
   setTimeout(() => el.remove(), 4000);
 }
 
+// Schickt einen Teil der Seite per PUT als JSON. Liefert Status und Rumpf;
+// wirft nur, wenn der Dienst gar nicht erreichbar ist.
+async function senden(pfad, rumpf) {
+  const res = await fetch(pfad, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rumpf),
+  });
+  let daten = {};
+  try {
+    daten = await res.json();
+  } catch (err) {
+    // Kein JSON (z. B. eine Fehlerseite des Reverse Proxys): dann greift
+    // beim Aufrufer die Rückfallmeldung.
+  }
+  return { ok: res.ok, status: res.status, daten };
+}
+
 // Sammelt die Änderungen auf der Benutzerseite und schickt sie mit einem
-// Klick — statt bei jedem Häkchen einen Request abzusetzen.
+// Klick — statt bei jedem Häkchen einen Request abzusetzen. Zugriff und
+// Semiadmin-Zuordnung sind getrennte Endpunkte; gesendet wird nur der Teil,
+// der sich geändert hat.
 (function () {
   const form = document.getElementById("user-form");
   if (!form) return;
@@ -21,42 +41,75 @@ function toast(text, art = "ok") {
   const allBox = document.getElementById("all-folders");
   const enabledOn = document.getElementById("enabled-on");
   const enabledOff = document.getElementById("enabled-off");
+  // Fehlt bei Administratoren und ohne API-Key.
+  const semiBox = document.getElementById("semiadmin-box");
   const folderBoxes = () =>
     Array.from(document.querySelectorAll("#libraries input[type=checkbox]"));
+  const targetBoxes = () =>
+    Array.from(document.querySelectorAll("#targets input[type=checkbox]"));
+  const ausgewaehlt = (boxen) =>
+    boxen
+      .filter((b) => b.checked)
+      .map((b) => b.value)
+      .sort();
 
-  function lesen() {
+  function lesenZugriff() {
     return {
       disabled: enabledOn ? !enabledOn.checked : false,
       allFolders: allBox.checked,
-      folders: folderBoxes()
-        .filter((b) => b.checked)
-        .map((b) => b.value)
-        .sort(),
+      folders: ausgewaehlt(folderBoxes()),
     };
   }
 
-  // Der Stand, den der Server zuletzt bestätigt hat.
-  let bestaetigt = lesen();
+  function lesenZuordnung() {
+    if (!semiBox) return null;
+    return { semiadmin: semiBox.checked, users: ausgewaehlt(targetBoxes()) };
+  }
 
-  function unterschiede(a, b) {
+  // Die Stände, die der Server zuletzt bestätigt hat.
+  let zugriff = lesenZugriff();
+  let zuordnung = lesenZuordnung();
+
+  function mengenAbstand(a, b) {
+    const mengeA = new Set(a);
+    const mengeB = new Set(b);
     let n = 0;
-    if (a.disabled !== b.disabled) n++;
-    if (a.allFolders !== b.allFolders) n++;
-    const mengeA = new Set(a.folders);
-    const mengeB = new Set(b.folders);
     for (const id of mengeA) if (!mengeB.has(id)) n++;
     for (const id of mengeB) if (!mengeA.has(id)) n++;
     return n;
   }
 
-  function anwenden(stand) {
-    if (enabledOn) enabledOn.checked = !stand.disabled;
-    if (enabledOff) enabledOff.checked = stand.disabled;
-    allBox.checked = stand.allFolders;
-    const gesetzt = new Set(stand.folders);
+  function unterschiedeZugriff(a, b) {
+    let n = 0;
+    if (a.disabled !== b.disabled) n++;
+    if (a.allFolders !== b.allFolders) n++;
+    return n + mengenAbstand(a.folders, b.folders);
+  }
+
+  function unterschiedeZuordnung(a, b) {
+    if (!a || !b) return 0;
+    let n = a.semiadmin !== b.semiadmin ? 1 : 0;
+    // Ohne Haken ignoriert der Server die Auswahl; dann zählt sie nicht.
+    if (b.semiadmin) n += mengenAbstand(a.users, b.users);
+    return n;
+  }
+
+  // Setzt die Felder auf die bestätigten Stände.
+  function anwenden() {
+    if (enabledOn) enabledOn.checked = !zugriff.disabled;
+    if (enabledOff) enabledOff.checked = zugriff.disabled;
+    allBox.checked = zugriff.allFolders;
+    const freigegeben = new Set(zugriff.folders);
     folderBoxes().forEach((b) => {
-      b.checked = gesetzt.has(b.value);
+      b.checked = freigegeben.has(b.value);
     });
+    if (semiBox && zuordnung) {
+      semiBox.checked = zuordnung.semiadmin;
+      const ziele = new Set(zuordnung.users);
+      targetBoxes().forEach((b) => {
+        b.checked = ziele.has(b.value);
+      });
+    }
   }
 
   function aktualisieren() {
@@ -65,7 +118,15 @@ function toast(text, art = "ok") {
     folderBoxes().forEach((b) => {
       b.disabled = allBox.checked;
     });
-    const anzahl = unterschiede(bestaetigt, lesen());
+    // Die Chips sind nur wählbar, solange der Semiadmin-Haken gesetzt ist.
+    if (semiBox) {
+      targetBoxes().forEach((b) => {
+        b.disabled = !semiBox.checked;
+      });
+    }
+    const anzahl =
+      unterschiedeZugriff(zugriff, lesenZugriff()) +
+      unterschiedeZuordnung(zuordnung, lesenZuordnung());
     saveBtn.disabled = anzahl === 0;
     saveBtn.textContent = anzahl === 0 ? "Speichern" : `Speichern (${anzahl})`;
     hint.textContent =
@@ -76,40 +137,56 @@ function toast(text, art = "ok") {
           : `${anzahl} Änderungen`;
   }
 
+  // Zurück auf den bestätigten Stand, statt eine Änderung vorzutäuschen. Ein
+  // bereits gespeicherter Teil bleibt gespeichert.
+  function fehlschlag(text) {
+    anwenden();
+    aktualisieren();
+    toast(text, "err");
+  }
+
   form.addEventListener("change", aktualisieren);
 
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
+    const id = form.dataset.userId;
     try {
-      const res = await fetch(`/api/users/${form.dataset.userId}/access`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lesen()),
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
+      if (unterschiedeZugriff(zugriff, lesenZugriff()) > 0) {
+        const r = await senden(`/api/users/${id}/access`, lesenZugriff());
+        if (r.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        if (!r.ok) {
+          fehlschlag(r.daten.error || "Speichern fehlgeschlagen.");
+          return;
+        }
+        zugriff = {
+          disabled: r.daten.disabled,
+          allFolders: r.daten.allFolders,
+          folders: (r.daten.folders || []).slice().sort(),
+        };
       }
-      const daten = await res.json();
-      if (!res.ok) {
-        // Zurück auf den Serverzustand, statt eine Änderung vorzutäuschen.
-        anwenden(bestaetigt);
-        aktualisieren();
-        toast(daten.error || "Speichern fehlgeschlagen.", "err");
-        return;
+      if (unterschiedeZuordnung(zuordnung, lesenZuordnung()) > 0) {
+        const r = await senden(`/api/users/${id}/delegation`, lesenZuordnung());
+        if (r.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        if (!r.ok) {
+          fehlschlag(r.daten.error || "Speichern fehlgeschlagen.");
+          return;
+        }
+        zuordnung = {
+          semiadmin: r.daten.semiadmin,
+          users: (r.daten.users || []).slice().sort(),
+        };
       }
-      bestaetigt = {
-        disabled: daten.disabled,
-        allFolders: daten.allFolders,
-        folders: (daten.folders || []).slice().sort(),
-      };
-      anwenden(bestaetigt);
+      anwenden();
       aktualisieren();
       toast("Gespeichert.", "ok");
     } catch (err) {
-      anwenden(bestaetigt);
-      aktualisieren();
-      toast("Der Dienst ist nicht erreichbar.", "err");
+      fehlschlag("Der Dienst ist nicht erreichbar.");
     }
   });
 

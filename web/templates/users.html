@@ -13,6 +13,7 @@
           <div class="flex items-center gap-2">
             <span class="truncate text-[14.5px] font-semibold text-text">{{.Name}}</span>
             {{if .Admin}}<span class="pill pill-wait">Administrator</span>{{end}}
+            {{if .Semiadmin}}<span class="pill pill-run">Semiadmin</span>{{end}}
           </div>
           <div class="mt-0.5 text-[12.5px] text-muted">{{.Access}}</div>
         </div>

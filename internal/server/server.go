@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sort"
 
 	"jellyfinenabler/internal/jellyfin"
 	"jellyfinenabler/internal/session"
@@ -64,6 +65,7 @@ func New(jf Jellyfin, sessions *session.Store, cookieSecure string, semiadmins *
 	mux.HandleFunc("GET /{$}", s.seite(s.handleStart))
 	mux.HandleFunc("GET /users/{id}", s.seite(nurAdmin(s.handleUserPage, zurStartseite)))
 	mux.HandleFunc("PUT /api/users/{id}/access", s.api(nurAdmin(s.handleUpdateAccess, keinAdmin)))
+	mux.HandleFunc("PUT /api/users/{id}/delegation", s.api(nurAdmin(s.handleDelegation, keinAdmin)))
 	return noStore(mux)
 }
 
@@ -280,6 +282,8 @@ type userRow struct {
 	Admin    bool
 	Disabled bool
 	Access   string
+	// Semiadmin zeigt die Pille "Semiadmin".
+	Semiadmin bool
 }
 
 type usersData struct {
@@ -353,13 +357,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, sess sessio
 		return
 	}
 	daten := usersData{Title: "Jellyfin Zugriff"}
+	// Die Pille erscheint nur, wenn die Rolle auch wirkt: ohne API-Key
+	// bleibt ein Eintrag in der Settings-Datei wirkungslos.
+	var eingetragen map[string][]string
+	if s.apiKey != "" {
+		eingetragen = s.semiadmins.Semiadmins()
+	}
 	for _, u := range users {
+		_, semiadmin := eingetragen[u.ID]
 		daten.Users = append(daten.Users, userRow{
-			ID:       u.ID,
-			Name:     u.Name,
-			Admin:    u.Admin,
-			Disabled: u.Access.Disabled,
-			Access:   zugriffText(u, libs),
+			ID:        u.ID,
+			Name:      u.Name,
+			Admin:     u.Admin,
+			Disabled:  u.Access.Disabled,
+			Access:    zugriffText(u, libs),
+			Semiadmin: semiadmin && !u.Admin,
 		})
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "users", daten); err != nil {
@@ -408,6 +420,19 @@ type userData struct {
 	Title     string
 	User      jellyfin.User
 	Libraries []libraryRow
+	// SemiadminAn: der Abschnitt "Semiadmin" ist bedienbar, weil der
+	// API-Key gesetzt ist. Bei Administratoren fehlt der Abschnitt ganz.
+	SemiadminAn bool
+	// Semiadmin: der Benutzer steht in der Settings-Datei.
+	Semiadmin  bool
+	Kandidaten []kandidatRow
+}
+
+// kandidatRow ist ein Chip unter "Darf schalten:".
+type kandidatRow struct {
+	ID      string
+	Name    string
+	Checked bool
 }
 
 // handleUserPage zeigt die Detailseite eines Benutzers. Ein nicht mehr
@@ -437,6 +462,13 @@ func (s *Server) handleUserPage(w http.ResponseWriter, r *http.Request, sess ses
 	daten := userData{Title: u.Name + " · Jellyfin Zugriff", User: u}
 	for _, l := range libs {
 		daten.Libraries = append(daten.Libraries, libraryRow{ID: l.ID, Name: l.Name, Checked: freigegeben[l.ID]})
+	}
+	if !u.Admin && s.apiKey != "" {
+		daten.SemiadminAn = true
+		if err := s.kandidatenFuellen(r, sess, u, &daten); err != nil {
+			s.seitenFehler(w, r, err)
+			return
+		}
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "user", daten); err != nil {
 		log.Printf("Detailseite nicht darstellbar: %v", err)
@@ -515,4 +547,125 @@ func (s *Server) apiFehler(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	log.Printf("Jellyfin nicht erreichbar: %v", err)
 	writeError(w, http.StatusBadGateway, "Jellyfin ist gerade nicht erreichbar.")
+}
+
+// kandidatenFuellen setzt den Semiadmin-Abschnitt der Detailseite: ob u
+// eingetragen ist und welche Nicht-Admins als Ziel in Frage kommen.
+// Verwaiste IDs aus der Settings-Datei erscheinen nicht und fallen beim
+// nächsten Speichern dieser Zuordnung weg (Spec §Fehlerbehandlung).
+func (s *Server) kandidatenFuellen(r *http.Request, sess session.Session, u jellyfin.User, daten *userData) error {
+	users, err := s.jf.Users(r.Context(), sess.Token)
+	if err != nil {
+		return err
+	}
+	targets, eingetragen := s.semiadmins.Targets(u.ID)
+	daten.Semiadmin = eingetragen
+	gewaehlt := make(map[string]bool, len(targets))
+	for _, id := range targets {
+		gewaehlt[id] = true
+	}
+	for _, k := range users {
+		if k.Admin || k.ID == u.ID {
+			continue
+		}
+		daten.Kandidaten = append(daten.Kandidaten, kandidatRow{ID: k.ID, Name: k.Name, Checked: gewaehlt[k.ID]})
+	}
+	return nil
+}
+
+type delegationRequest struct {
+	Semiadmin bool     `json:"semiadmin"`
+	Users     []string `json:"users"`
+}
+
+type delegationResponse struct {
+	Semiadmin bool     `json:"semiadmin"`
+	Users     []string `json:"users"`
+}
+
+// handleDelegation speichert, ob {id} Semiadmin ist und wen er schalten
+// darf (Spec §PUT /api/users/{id}/delegation). Die Ablehnungen folgen der
+// Reihenfolge der Spec.
+func (s *Server) handleDelegation(w http.ResponseWriter, r *http.Request, sess session.Session) {
+	var req delegationRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Die Anfrage war nicht lesbar.")
+		return
+	}
+	users, err := s.jf.Users(r.Context(), sess.Token)
+	if err != nil {
+		s.apiFehler(w, r, err)
+		return
+	}
+	nachID := make(map[string]jellyfin.User, len(users))
+	for _, u := range users {
+		nachID[u.ID] = u
+	}
+
+	// Die Settings-Datei ist eine Ressource des Dienstes, die Jellyfin nicht
+	// schützt. Ein in Jellyfin inzwischen entmachteter Admin mit alter
+	// Sitzung dürfte sonst weiter Zuordnungen ändern.
+	if ich, ok := nachID[sess.UserID]; !ok || !ich.Admin {
+		if _, id, ok := s.aktuelleSitzung(r); ok {
+			s.sessions.Delete(id)
+		}
+		writeError(w, http.StatusForbidden, "Dieses Konto ist kein Administrator mehr.")
+		return
+	}
+	if s.apiKey == "" {
+		writeError(w, http.StatusConflict, "JELLYFIN_API_KEY ist nicht gesetzt.")
+		return
+	}
+	id := r.PathValue("id")
+	ziel, ok := nachID[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Der Benutzer existiert nicht mehr.")
+		return
+	}
+	if ziel.Admin {
+		writeError(w, http.StatusBadRequest, "Administratoren können keine Semiadmins sein.")
+		return
+	}
+
+	if !req.Semiadmin {
+		// users wird ignoriert.
+		if err := s.semiadmins.Remove(id); err != nil {
+			log.Printf("Settings-Datei nicht schreibbar: %v", err)
+			writeError(w, http.StatusInternalServerError, "Einstellungen konnten nicht gespeichert werden.")
+			return
+		}
+		writeJSON(w, http.StatusOK, delegationResponse{Semiadmin: false, Users: []string{}})
+		return
+	}
+
+	// Leere Liste (auch "users": null) ist erlaubt: der Semiadmin kann sich
+	// anmelden und sieht eine leere Liste.
+	targets := []string{}
+	gesehen := make(map[string]bool, len(req.Users))
+	for _, t := range req.Users {
+		u, ok := nachID[t]
+		switch {
+		case !ok:
+			writeError(w, http.StatusBadRequest, "Unbekannter Benutzer: "+t)
+			return
+		case u.Admin:
+			writeError(w, http.StatusBadRequest, "Administratoren können nicht geschaltet werden: "+u.Name)
+			return
+		case t == id:
+			writeError(w, http.StatusBadRequest, "Ein Semiadmin kann sich nicht selbst schalten.")
+			return
+		}
+		if gesehen[t] {
+			continue
+		}
+		gesehen[t] = true
+		targets = append(targets, t)
+	}
+	sort.Strings(targets)
+	if err := s.semiadmins.Set(id, targets); err != nil {
+		log.Printf("Settings-Datei nicht schreibbar: %v", err)
+		writeError(w, http.StatusInternalServerError, "Einstellungen konnten nicht gespeichert werden.")
+		return
+	}
+	writeJSON(w, http.StatusOK, delegationResponse{Semiadmin: true, Users: targets})
 }

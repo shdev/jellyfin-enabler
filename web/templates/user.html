@@ -35,6 +35,33 @@
         </div>
       </div>
 
+      {{if not .User.Admin}}
+      <div class="h-px bg-edge"></div>
+
+      <div class="grid gap-4" id="semiadmin">
+        <h2 class="section-title">Semiadmin</h2>
+        {{if .SemiadminAn}}
+        <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+          <input type="checkbox" id="semiadmin-box"{{if .Semiadmin}} checked{{end}}>
+          Darf andere Benutzer aktivieren und deaktivieren
+        </label>
+        <div>
+          <div class="field-label">Darf schalten:</div>
+          <div class="flex flex-wrap gap-2" id="targets">
+            {{range .Kandidaten}}
+            <label>
+              <input class="sr-only" type="checkbox" name="target" value="{{.ID}}"{{if .Checked}} checked{{end}}{{if not $.Semiadmin}} disabled{{end}}>
+              <span class="chip">{{.Name}}</span>
+            </label>
+            {{end}}
+          </div>
+        </div>
+        {{else}}
+        <div class="text-xs text-muted">Semiadmin-Funktion ist aus: JELLYFIN_API_KEY ist nicht gesetzt.</div>
+        {{end}}
+      </div>
+      {{end}}
+
       <div class="flex items-center gap-3">
         <button class="btn btn-primary" id="save-btn" type="button" disabled>Speichern</button>
         <span class="text-xs text-muted" id="save-hint">Keine Änderungen</span>
