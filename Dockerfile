@@ -18,11 +18,17 @@ COPY . .
 COPY --from=css /out/app.css web/static/app.css
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o /app ./cmd/server
+# Leeres Datenverzeichnis für die Settings-Datei (SETTINGS_FILE, Vorgabe
+# /data/settings.json). distroless hat keine Shell; deshalb wird es hier
+# angelegt und unten mit Besitzer nonroot (65532) übernommen — sonst könnte
+# der Dienst dort nicht schreiben.
+RUN mkdir -p /data
 
 # Stufe 3: Laufzeit. distroless/static bringt CA-Zertifikate mit — nötig,
 # wenn Jellyfin über HTTPS erreicht wird — und läuft als nonroot.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /app /usr/local/bin/app
+COPY --from=build --chown=65532:65532 /data /data
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/app"]
 # Exec-Form ohne Shell: das Image hat keine.

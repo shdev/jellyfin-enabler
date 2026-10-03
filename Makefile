@@ -29,9 +29,14 @@ vet:
 # Lokaler Lauf gegen den echten Jellyfin-Server; URL überschreibbar:
 #   make run JELLYFIN_URL=http://nas:8096
 JELLYFIN_URL ?= http://localhost:8096
+# Settings-Datei für lokale Läufe; das Verzeichnis ist per .gitignore
+# ausgeschlossen. JELLYFIN_API_KEY wird bewusst nicht hier gesetzt: make
+# druckt jedes Rezept aus, der Key käme sonst ins Terminal. Er wird aus der
+# Umgebung geerbt (export JELLYFIN_API_KEY=… vor make run).
+SETTINGS_FILE ?= ./data/settings.json
 
 run: build
-	PORT=8081 JELLYFIN_URL=$(JELLYFIN_URL) $(BINARY)
+	PORT=8081 JELLYFIN_URL=$(JELLYFIN_URL) SETTINGS_FILE=$(SETTINGS_FILE) $(BINARY)
 
 image:
 	docker build --platform linux/amd64 -t $(IMAGE) .

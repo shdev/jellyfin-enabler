@@ -2,7 +2,8 @@
 
 Kleine Weboberfläche, um Jellyfin-Benutzer zu aktivieren bzw. zu deaktivieren
 und ihnen Bibliotheken zuzuordnen. Angemeldet wird sich mit einem
-Jellyfin-Administrator; der Dienst speichert selbst keine Zugangsdaten.
+Jellyfin-Administrator oder als Semiadmin (siehe unten); der Dienst speichert
+selbst keine Passwörter.
 
 Geprüft gegen **Jellyfin 10.11.0**.
 
@@ -30,13 +31,47 @@ Danach erreichbar unter <http://localhost:8081>.
 | `SESSION_TTL` | `12h` | Lebensdauer einer Anmeldung |
 | `COOKIE_SECURE` | `auto` | hinter TLS-Proxy auf `true` setzen |
 | `HTTP_TIMEOUT` | `15s` | Zeitlimit für Jellyfin-Aufrufe |
+| `JELLYFIN_API_KEY` | leer | Jellyfin-API-Schlüssel für Semiadmins; leer schaltet die Funktion aus. Gehört in `.env`, nicht in `docker-compose.yml` |
+| `SETTINGS_FILE` | `/data/settings.json` | Pfad der Settings-Datei mit den Semiadmin-Zuordnungen |
+
+## Semiadmins
+
+Ein Semiadmin ist ein gewöhnliches Jellyfin-Konto, das bestimmte andere
+Benutzer aktivieren und deaktivieren darf — typischerweise ein Elternteil für
+die Konten der eigenen Kinder. Er meldet sich mit seinem normalen
+Jellyfin-Konto an und sieht nur die ihm zugewiesenen Benutzer mit einem
+Aktiv/Aus-Schalter; Bibliotheken kann er nicht ändern.
+
+Einrichten:
+
+1. Im Jellyfin-Dashboard unter *API-Schlüssel* einen Schlüssel anlegen.
+2. Ihn in eine Datei `.env` neben `docker-compose.yml` schreiben:
+   `JELLYFIN_API_KEY=<schlüssel>` — ohne Anführungszeichen und Leerzeichen.
+3. Neu starten (`docker compose up -d`). Steht im Log
+   „JELLYFIN_API_KEY konnte nicht geprüft werden: …", ist der Schlüssel
+   falsch oder Jellyfin war beim Start nicht erreichbar.
+4. Als Administrator die Detailseite des künftigen Semiadmins öffnen, im
+   Abschnitt „Semiadmin" den Haken setzen, die Benutzer wählen, speichern.
+
+Die Zuordnung liegt in `SETTINGS_FILE` (im Container `/data/settings.json`,
+benanntes Volume `jellyfin-enabler-data`) und übersteht Neustarts. Wer statt
+des benannten Volumes einen Bind-Mount nutzt, muss das Host-Verzeichnis dem
+Benutzer 65532 geben (`sudo chown 65532:65532 ./data`), unter dem der Dienst
+im Container läuft — sonst scheitert jedes Speichern mit „Einstellungen
+konnten nicht gespeichert werden."
+
+Ohne `JELLYFIN_API_KEY` ist die Funktion aus; eine vorhandene Zuordnung bleibt
+in der Datei und wirkt wieder, sobald der Schlüssel gesetzt ist. Jede
+Schaltung eines Semiadmins steht im Log des Dienstes
+(`semiadmin schaltet: von=… ziel=… disabled=…`), weil Jellyfins
+Aktivitätslog bei Aufrufen mit API-Schlüssel keinen Benutzer nennt.
 
 ## Entwicklung
 
 ```bash
 make check      # gofmt, go vet, Tests
 make css        # Tailwind im Container übersetzen
-make run        # lokal starten, JELLYFIN_URL=… überschreibbar
+make run        # lokal starten, JELLYFIN_URL=… und SETTINGS_FILE=… überschreibbar
 make start      # Container bauen, starten und die UI öffnen
 ```
 
@@ -46,7 +81,9 @@ Design, Makefile und Docker-Aufbau folgen dem Schwesterprojekt
 ## Was der Dienst bewusst nicht kann
 
 Benutzer anlegen oder löschen, Passwörter ändern, Sitzungen beenden. Dafür
-gibt es das Jellyfin-Dashboard.
+gibt es das Jellyfin-Dashboard. Semiadmins können keine Bibliotheken ändern;
+Gruppen und Zeitpläne gibt es nicht, und verwaiste Einträge gelöschter
+Benutzer werden nicht automatisch aufgeräumt.
 
 Wird ein bereits deaktivierter Benutzer in Jellyfin nachträglich zum
 Administrator gemacht, lässt er sich über diese Oberfläche nicht mehr
@@ -59,3 +96,9 @@ Jellyfin-Dashboard.
 Wer die Oberfläche erreicht und ein Admin-Passwort hat, kann Zugänge
 abschalten. Der Dienst gehört ins Heimnetz, hinter Reverse Proxy und TLS —
 nicht ungeschützt ins Internet.
+
+`JELLYFIN_API_KEY` ist ein vollwertiger Admin-Zugang zu Jellyfin. Er gehört
+nur in `.env` (per `.gitignore` ausgeschlossen), nicht in
+`docker-compose.yml` und in kein Repository. Der Dienst loggt ihn nie und
+benutzt ihn ausschließlich für die Semiadmin-Ansicht und das Schalten. Ist er
+abgeflossen: im Jellyfin-Dashboard widerrufen und einen neuen anlegen.

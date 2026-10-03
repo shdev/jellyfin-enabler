@@ -386,9 +386,7 @@ Benutzer zugewiesen.“
 
 Gegen die echte Jellyfin-Instanz (10.11) wird einmal geprüft, dass ein API-Key
 im Header `Authorization: MediaBrowser … Token="<Key>"` angenommen wird:
-`GET /Users` muss 200 liefern. Diese Annahme ist noch nicht geprüft. Fällt die
-Prüfung negativ aus, wird vor der Umsetzung entschieden, wie der Key stattdessen
-übergeben wird; die übrige Spec bleibt davon unberührt.
+`GET /Users` muss 200 liefern. Diese Annahme wurde am 03.10.2026 gegen die echte Instanz geprüft: `GET /Users` mit dem API-Key im Header lieferte 200.
 
 ## Risiken & Hinweise
 
