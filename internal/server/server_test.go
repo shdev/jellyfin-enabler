@@ -36,6 +36,13 @@ type fakeJF struct {
 	// Stand trägt und nicht bloß die Anfrage zurückspiegelt.
 	writtenBack *jellyfin.Access
 	loggedOut   []string
+	logoutErr   error
+	// SetDisabled: Token, Ziel und Wert des letzten Aufrufs. setDisabled
+	// bleibt nil, solange nicht geschaltet wurde.
+	setToken    string
+	setID       string
+	setDisabled *bool
+	setErr      error
 }
 
 func (f *fakeJF) Authenticate(_ context.Context, _, _ string) (jellyfin.Session, error) {
@@ -43,7 +50,7 @@ func (f *fakeJF) Authenticate(_ context.Context, _, _ string) (jellyfin.Session,
 }
 func (f *fakeJF) Logout(_ context.Context, token string) error {
 	f.loggedOut = append(f.loggedOut, token)
-	return nil
+	return f.logoutErr
 }
 func (f *fakeJF) Users(context.Context, string) ([]jellyfin.User, error) {
 	return f.users, f.usersErr
@@ -65,10 +72,18 @@ func (f *fakeJF) UpdateAccess(_ context.Context, _, userID string, a jellyfin.Ac
 	return a, nil
 }
 
+func (f *fakeJF) SetDisabled(_ context.Context, token, userID string, disabled bool) (bool, error) {
+	f.setToken, f.setID, f.setDisabled = token, userID, &disabled
+	if f.setErr != nil {
+		return false, f.setErr
+	}
+	return disabled, nil
+}
+
 // aufbau liefert Handler, Fake und Sitzungsspeicher.
 func aufbau(t *testing.T) (http.Handler, *fakeJF, *session.Store) {
 	t.Helper()
-	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa"}}
+	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa", Admin: true}}
 	store := session.NewStore(time.Hour)
 	return server.New(jf, store, "false"), jf, store
 }
@@ -77,7 +92,7 @@ func aufbau(t *testing.T) (http.Handler, *fakeJF, *session.Store) {
 // die knappe Variante für alle übrigen Tests.
 func aufbauMit(t *testing.T, cookieSecure string) (http.Handler, *fakeJF, *session.Store) {
 	t.Helper()
-	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa"}}
+	jf := &fakeJF{sess: jellyfin.Session{Token: "tok", UserID: "u-1", Name: "papa", Admin: true}}
 	store := session.NewStore(time.Hour)
 	return server.New(jf, store, cookieSecure), jf, store
 }
@@ -190,15 +205,37 @@ func TestLoginMitFalschenDatenZeigtFehler(t *testing.T) {
 	}
 }
 
-func TestLoginNichtAdminWirdAbgewiesen(t *testing.T) {
+// Ein Konto ohne Rolle bekommt kein Cookie, und das gerade erzeugte Token
+// wird entwertet — sonst bliebe es ungenutzt in Jellyfin gültig.
+func TestLoginOhneRolleWirdAbgewiesenUndAbgemeldet(t *testing.T) {
 	h, jf, _ := aufbau(t)
-	jf.authErr = jellyfin.ErrNotAdmin
+	jf.sess = jellyfin.Session{Token: "tok-kind", UserID: "u-2", Name: "kind1"}
 	rec := anmelden(h, "kind1", "geheim")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Code = %d, erwartet 403", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Administrator") {
-		t.Errorf("Rumpf ohne Hinweis auf fehlende Rechte: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Dieses Konto hat keinen Zugriff auf diesen Dienst.") {
+		t.Errorf("Rumpf ohne Ablehnung: %s", rec.Body.String())
+	}
+	if len(jf.loggedOut) != 1 || jf.loggedOut[0] != "tok-kind" {
+		t.Errorf("Jellyfin-Abmeldung = %v, erwartet [tok-kind]", jf.loggedOut)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "jfe_session" {
+			t.Error("ein abgewiesenes Konto darf kein Sitzungscookie bekommen")
+		}
+	}
+}
+
+// Scheitert die Abmeldung, bleibt es trotzdem bei der Ablehnung; der Fehler
+// wird nur geloggt.
+func TestLoginOhneRolleBleibtAbgewiesenWennAbmeldungScheitert(t *testing.T) {
+	h, jf, _ := aufbau(t)
+	jf.sess = jellyfin.Session{Token: "tok-kind", UserID: "u-2", Name: "kind1"}
+	jf.logoutErr = errors.New("Verbindung abgelehnt")
+	rec := anmelden(h, "kind1", "geheim")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Code = %d, erwartet 403", rec.Code)
 	}
 }
 

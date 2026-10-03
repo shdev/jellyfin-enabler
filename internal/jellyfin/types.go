@@ -27,9 +27,12 @@ type Library struct {
 	Name string
 }
 
-// Session ist das Ergebnis einer erfolgreichen Anmeldung.
+// Session ist das Ergebnis einer erfolgreichen Anmeldung. Admin trägt
+// Policy.IsAdministrator; ob ein Nicht-Admin hinein darf, entscheidet der
+// Server (Spec §Anmeldung, Sitzung und Rollen).
 type Session struct {
 	Token  string
 	UserID string
 	Name   string
+	Admin  bool
 }

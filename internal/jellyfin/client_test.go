@@ -146,27 +146,37 @@ func TestDeviceIDIstStabilUndUnterschiedlich(t *testing.T) {
 	}
 }
 
-func TestAuthenticateLehntNichtAdminAbUndMeldetAb(t *testing.T) {
-	f := newFake(t)
-	f.reply("/Users/AuthenticateByName", http.StatusOK, `{
-	  "AccessToken": "tok-kind",
-	  "User": {"Id": "u-2", "Name": "kind1", "Policy": {"IsAdministrator": false}}
-	}`)
-	f.reply("/Sessions/Logout", http.StatusNoContent, "")
+// Seit den Semiadmins entscheidet der Server, wer hinein darf. Der Client
+// liefert nur das Admin-Flag und lässt das Token unangetastet — sonst hätte
+// ein Semiadmin nach der Anmeldung schon kein gültiges Token mehr.
+func TestAuthenticateLiefertAdminFlagOhneAbzumelden(t *testing.T) {
+	cases := []struct {
+		name    string
+		antwort string
+		admin   bool
+	}{
+		{"Administrator", adminLoginAntwort, true},
+		{"kein Administrator", `{
+		  "AccessToken": "tok-kind",
+		  "User": {"Id": "u-2", "Name": "kind1", "Policy": {"IsAdministrator": false}}
+		}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake(t)
+			f.reply("/Users/AuthenticateByName", http.StatusOK, tc.antwort)
 
-	_, err := f.client().Authenticate(context.Background(), "kind1", "geheim")
-	if !errors.Is(err, jellyfin.ErrNotAdmin) {
-		t.Fatalf("err = %v, erwartet ErrNotAdmin", err)
-	}
-	// Das eben erzeugte Token darf nicht zurückbleiben (Spec §Authentifizierung).
-	if f.callCount() != 2 {
-		t.Fatalf("%d Aufrufe, erwartet 2 (Anmeldung + Abmeldung)", f.callCount())
-	}
-	if p := f.call(1).Path; p != "/Sessions/Logout" {
-		t.Errorf("zweiter Aufruf = %s, erwartet /Sessions/Logout", p)
-	}
-	if !strings.Contains(f.call(1).Auth, `Token="tok-kind"`) {
-		t.Errorf("Abmeldung ohne das erzeugte Token: %q", f.call(1).Auth)
+			sess, err := f.client().Authenticate(context.Background(), "wer", "geheim")
+			if err != nil {
+				t.Fatalf("unerwarteter Fehler: %v", err)
+			}
+			if sess.Admin != tc.admin {
+				t.Errorf("Admin = %v, erwartet %v", sess.Admin, tc.admin)
+			}
+			if f.callCount() != 1 {
+				t.Errorf("%d Aufrufe, erwartet 1 — Authenticate darf nicht selbst abmelden", f.callCount())
+			}
+		})
 	}
 }
 
@@ -518,5 +528,82 @@ func TestUpdateAccessReichtVerbotAlsDeutscheMeldungDurch(t *testing.T) {
 	}
 	if jfErr.Message != "Administratoren können nicht deaktiviert werden." {
 		t.Errorf("Message = %q", jfErr.Message)
+	}
+}
+
+// SetDisabled ist der Weg des Semiadmins. Er darf ausschließlich IsDisabled
+// ändern — insbesondere nicht die Bibliotheksfreigaben (Spec §Jellyfin-Client).
+func TestSetDisabledAendertNurIsDisabled(t *testing.T) {
+	f := newFake(t)
+	geschrieben := policySchreiber(t, f, vollePolicy)
+
+	neu, err := f.client().SetDisabled(context.Background(), "key-abc", "u-2", true)
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if !neu {
+		t.Error("Rückgabe = false, erwartet den geschriebenen Wert true")
+	}
+
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(vollePolicy), &original); err != nil {
+		t.Fatalf("Testliteral kaputt: %v", err)
+	}
+	if len(*geschrieben) != len(original) {
+		t.Fatalf("%d Felder geschrieben, erwartet %d", len(*geschrieben), len(original))
+	}
+	for name, wert := range original {
+		if name == "IsDisabled" {
+			continue
+		}
+		neu, da := (*geschrieben)[name]
+		if !da {
+			t.Errorf("Feld %s fehlt in der geschriebenen Policy", name)
+			continue
+		}
+		if kompakt(t, wert) != kompakt(t, neu) {
+			t.Errorf("Feld %s verändert: %s -> %s", name, kompakt(t, wert), kompakt(t, neu))
+		}
+	}
+	if got := kompakt(t, (*geschrieben)["IsDisabled"]); got != "true" {
+		t.Errorf("IsDisabled = %s, erwartet true", got)
+	}
+}
+
+// Der API-Key läuft als token-Argument in den vorhandenen Header — beim
+// Lesen der Policy wie beim Schreiben.
+func TestSetDisabledSendetDenKeyAlsToken(t *testing.T) {
+	f := newFake(t)
+	policySchreiber(t, f, vollePolicy)
+
+	if _, err := f.client().SetDisabled(context.Background(), "key-abc", "u-2", false); err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	if f.callCount() != 2 {
+		t.Fatalf("%d Aufrufe, erwartet 2 (Policy lesen + schreiben)", f.callCount())
+	}
+	for i := 0; i < f.callCount(); i++ {
+		if c := f.call(i); !strings.Contains(c.Auth, `Token="key-abc"`) {
+			t.Errorf("Aufruf %d (%s %s) ohne Key: %q", i, c.Method, c.Path, c.Auth)
+		}
+	}
+}
+
+func TestSetDisabledSchreibtNichtBeiAusgeduennterPolicy(t *testing.T) {
+	f := newFake(t)
+	f.reply("/Users/u-2", http.StatusOK, `{"Id":"u-2","Name":"kind1","Policy":{"IsDisabled": false}}`)
+
+	_, err := f.client().SetDisabled(context.Background(), "key-abc", "u-2", true)
+	var jfErr *jellyfin.Error
+	if !errors.As(err, &jfErr) {
+		t.Fatalf("err = %v, erwartet *jellyfin.Error", err)
+	}
+	if jfErr.Status != http.StatusBadGateway {
+		t.Errorf("Status = %d, erwartet 502", jfErr.Status)
+	}
+	for i := 0; i < f.callCount(); i++ {
+		if c := f.call(i); c.Method == http.MethodPost && strings.Contains(c.Path, "/Policy") {
+			t.Errorf("Aufruf %d ist ein POST auf %s — es hätte nichts geschrieben werden dürfen", i, c.Path)
+		}
 	}
 }

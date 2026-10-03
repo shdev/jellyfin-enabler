@@ -6,10 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,10 +17,6 @@ import (
 
 // clientName taucht in Jellyfin als App- und Gerätename der Sitzung auf.
 const clientName = "Jellyfin Enabler"
-
-// ErrNotAdmin meldet eine gültige Anmeldung ohne Administratorrechte. Der
-// Dienst schreibt Policies und braucht RequiresElevation.
-var ErrNotAdmin = errors.New("dieser Benutzer ist kein Administrator")
 
 type Client struct {
 	base    string
@@ -115,16 +109,15 @@ func (c *Client) Authenticate(ctx context.Context, username, password string) (S
 	if err != nil {
 		return Session{}, err
 	}
-	if !res.User.Policy.IsAdministrator {
-		// Kein verwaistes Token zurücklassen. Scheitert das, bleibt ein
-		// gültiges Admin-fremdes Token bestehen, ohne dass es sonst irgendwo
-		// auffiele — deshalb wird ein Fehlschlag geloggt statt verworfen.
-		if err := c.Logout(ctx, res.AccessToken); err != nil {
-			log.Printf("Token eines abgelehnten Anmeldeversuchs konnte nicht entwertet werden: %v", err)
-		}
-		return Session{}, ErrNotAdmin
-	}
-	return Session{Token: res.AccessToken, UserID: res.User.ID, Name: res.User.Name}, nil
+	// Kein Abweisen mehr an dieser Stelle: Auch Semiadmins melden sich mit
+	// einem gewöhnlichen Konto an. Wer ohne Rolle kommt, weist der Server ab
+	// und entwertet dabei das Token.
+	return Session{
+		Token:  res.AccessToken,
+		UserID: res.User.ID,
+		Name:   res.User.Name,
+		Admin:  res.User.Policy.IsAdministrator,
+	}, nil
 }
 
 func (c *Client) Logout(ctx context.Context, token string) error {
@@ -225,53 +218,54 @@ func (c *Client) Libraries(ctx context.Context, token string) ([]Library, error)
 	return libs, nil
 }
 
-// UpdateAccess liest die Policy frisch, ersetzt genau drei Schlüssel und
-// schreibt sie zurück. POST /Users/{id}/Policy ersetzt die Policy vollständig
-// — deshalb Read-Modify-Write über die Rohdaten, damit die übrigen 41 Felder
-// unangetastet bleiben (Spec §Policy-Passthrough).
-func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Access) (Access, error) {
+// policyAendern liest die Policy frisch, ersetzt genau die Schlüssel aus
+// felder und schreibt sie zurück. POST /Users/{id}/Policy ersetzt die Policy
+// vollständig — deshalb Read-Modify-Write über die Rohdaten, damit die
+// übrigen Felder unangetastet bleiben (Spec §Policy-Passthrough). UpdateAccess
+// und SetDisabled gehen beide hier durch, damit sie nicht auseinanderlaufen.
+func (c *Client) policyAendern(ctx context.Context, token, userID string, felder map[string]any) error {
 	r, err := c.rawUser(ctx, token, userID)
 	if err != nil {
-		return Access{}, err
+		return err
 	}
 	// Die Policy wird vollständig ersetzt. Bevor das passiert, muss
 	// plausibel sein, dass wir wirklich eine vollständige Policy gelesen
 	// haben — sonst schriebe ein ausgedünnter Rumpf (Reverse Proxy bei
 	// Teilausfall, geänderte DTO-Form nach einem Upgrade) eine Policy aus
-	// drei Feldern zurück und nähme dem Benutzer stillschweigend
+	// wenigen Feldern zurück und nähme dem Benutzer stillschweigend
 	// Transcoding-Rechte, Zeitfenster und Altersfreigabe.
 	// IsAdministrator liefert Jellyfin immer und dieser Dienst schreibt es nie.
 	if _, ok := r.Policy["IsAdministrator"]; !ok {
-		return Access{}, &Error{
+		return &Error{
 			Status:  http.StatusBadGateway,
 			Message: "Jellyfin hat eine unvollständige Policy geliefert. Es wurde nichts geändert.",
 			Body:    fmt.Sprintf("Policy von %s ohne IsAdministrator, %d Felder", userID, len(r.Policy)),
 		}
 	}
-	// Jellyfin erwartet eine Liste, kein null.
-	folders := a.Folders
-	if folders == nil {
-		folders = []string{}
-	}
-	set := func(name string, wert any) error {
+	for name, wert := range felder {
 		b, err := json.Marshal(wert)
 		if err != nil {
 			return err
 		}
 		r.Policy[name] = b
-		return nil
-	}
-	if err := set("IsDisabled", a.Disabled); err != nil {
-		return Access{}, err
-	}
-	if err := set("EnableAllFolders", a.AllFolders); err != nil {
-		return Access{}, err
-	}
-	if err := set("EnabledFolders", folders); err != nil {
-		return Access{}, err
 	}
 	path := "/Users/" + url.PathEscape(userID) + "/Policy"
-	if err := c.do(ctx, http.MethodPost, path, token, "", r.Policy, nil); err != nil {
+	return c.do(ctx, http.MethodPost, path, token, "", r.Policy, nil)
+}
+
+// UpdateAccess schreibt Aktiv-Status und Bibliotheksfreigaben.
+func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Access) (Access, error) {
+	// Jellyfin erwartet eine Liste, kein null.
+	folders := a.Folders
+	if folders == nil {
+		folders = []string{}
+	}
+	err := c.policyAendern(ctx, token, userID, map[string]any{
+		"IsDisabled":       a.Disabled,
+		"EnableAllFolders": a.AllFolders,
+		"EnabledFolders":   folders,
+	})
+	if err != nil {
 		return Access{}, err
 	}
 	// Jellyfin antwortet auf das Schreiben mit 204 ohne Rumpf. Der
@@ -279,4 +273,15 @@ func (c *Client) UpdateAccess(ctx context.Context, token, userID string, a Acces
 	// Stand — ein Nachlesen kostete einen zusätzlichen Request, den dieser
 	// Entwurf bewusst vermeidet.
 	return Access{Disabled: a.Disabled, AllFolders: a.AllFolders, Folders: folders}, nil
+}
+
+// SetDisabled ändert ausschließlich IsDisabled; Bibliotheksfreigaben bleiben
+// unberührt. Das ist der einzige schreibende Aufruf des Semiadmin-Pfads, der
+// ihn mit dem API-Key als token benutzt (Spec §Jellyfin-Client). Rückgabe
+// ist wie bei UpdateAccess der geschriebene Wert.
+func (c *Client) SetDisabled(ctx context.Context, token, userID string, disabled bool) (bool, error) {
+	if err := c.policyAendern(ctx, token, userID, map[string]any{"IsDisabled": disabled}); err != nil {
+		return false, err
+	}
+	return disabled, nil
 }

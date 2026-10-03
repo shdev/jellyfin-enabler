@@ -27,6 +27,7 @@ type Jellyfin interface {
 	User(ctx context.Context, token, userID string) (jellyfin.User, error)
 	Libraries(ctx context.Context, token string) ([]jellyfin.Library, error)
 	UpdateAccess(ctx context.Context, token, userID string, a jellyfin.Access) (jellyfin.Access, error)
+	SetDisabled(ctx context.Context, token, userID string, disabled bool) (bool, error)
 }
 
 type Server struct {
@@ -153,14 +154,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.jf.Authenticate(r.Context(), r.PostFormValue("username"), r.PostFormValue("password"))
-	switch {
-	case errors.Is(err, jellyfin.ErrNotAdmin):
-		s.renderLogin(w, http.StatusForbidden, "Nur Administratoren dürfen diesen Dienst verwenden.")
-		return
-	case err != nil:
+	if err != nil {
 		// Benutzer- und Passwortfehler werden bewusst nicht unterschieden.
 		log.Printf("Anmeldung fehlgeschlagen: %v", err)
 		s.renderLogin(w, http.StatusUnauthorized, "Anmeldung fehlgeschlagen.")
+		return
+	}
+	if !sess.Admin {
+		s.abweisen(w, r, sess.Token)
 		return
 	}
 	id, err := s.sessions.Create(sess.Token, sess.UserID, sess.Name)
@@ -178,6 +179,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.secure(r),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// abweisen entwertet das gerade erhaltene Token eines Kontos ohne Rolle und
+// zeigt die Ablehnung. Scheitert die Abmeldung, bleibt ein gültiges Token
+// zurück, ohne dass es sonst irgendwo auffiele — deshalb wird ein
+// Fehlschlag geloggt statt verworfen.
+func (s *Server) abweisen(w http.ResponseWriter, r *http.Request, token string) {
+	if err := s.jf.Logout(r.Context(), token); err != nil {
+		log.Printf("Token eines abgelehnten Anmeldeversuchs konnte nicht entwertet werden: %v", err)
+	}
+	s.renderLogin(w, http.StatusForbidden, "Dieses Konto hat keinen Zugriff auf diesen Dienst.")
 }
 
 // secure entscheidet über das Secure-Flag. "auto" setzt es nur bei direktem
